@@ -16,6 +16,8 @@ pub struct MnaSystem {
     pub num_nodes: usize,
     /// Number of voltage sources (and other current variables).
     pub num_vsources: usize,
+    /// Triplet accumulator for sparse matrix construction: (row, col, value).
+    pub triplets: Vec<(usize, usize, f64)>,
 }
 
 impl MnaSystem {
@@ -31,6 +33,7 @@ impl MnaSystem {
             rhs: DVector::zeros(size),
             num_nodes,
             num_vsources,
+            triplets: Vec::new(),
         }
     }
 
@@ -43,6 +46,18 @@ impl MnaSystem {
     pub fn clear(&mut self) {
         self.matrix.fill(0.0);
         self.rhs.fill(0.0);
+        self.triplets.clear();
+    }
+
+    /// Add a value to the coefficient matrix at (row, col) and record the triplet.
+    pub fn add_element(&mut self, row: usize, col: usize, value: f64) {
+        self.matrix[(row, col)] += value;
+        self.triplets.push((row, col, value));
+    }
+
+    /// Add a value to the RHS vector at the given row.
+    pub fn add_rhs(&mut self, row: usize, value: f64) {
+        self.rhs[row] += value;
     }
 
     /// Stamp a conductance between two nodes.
@@ -56,14 +71,14 @@ impl MnaSystem {
     /// Node indices are 0-based (ground is not included in matrix).
     pub fn stamp_conductance(&mut self, node_i: Option<usize>, node_j: Option<usize>, g: f64) {
         if let Some(i) = node_i {
-            self.matrix[(i, i)] += g;
+            self.add_element(i, i, g);
         }
         if let Some(j) = node_j {
-            self.matrix[(j, j)] += g;
+            self.add_element(j, j, g);
         }
         if let (Some(i), Some(j)) = (node_i, node_j) {
-            self.matrix[(i, j)] -= g;
-            self.matrix[(j, i)] -= g;
+            self.add_element(i, j, -g);
+            self.add_element(j, i, -g);
         }
     }
 
@@ -77,10 +92,10 @@ impl MnaSystem {
         current: f64,
     ) {
         if let Some(i) = node_i {
-            self.rhs[i] -= current;
+            self.add_rhs(i, -current);
         }
         if let Some(j) = node_j {
-            self.rhs[j] += current;
+            self.add_rhs(j, current);
         }
     }
 
@@ -102,12 +117,12 @@ impl MnaSystem {
 
         // B and C matrices (coupling between nodes and voltage source current)
         if let Some(i) = node_pos {
-            self.matrix[(i, row)] += 1.0;
-            self.matrix[(row, i)] += 1.0;
+            self.add_element(i, row, 1.0);
+            self.add_element(row, i, 1.0);
         }
         if let Some(j) = node_neg {
-            self.matrix[(j, row)] -= 1.0;
-            self.matrix[(row, j)] -= 1.0;
+            self.add_element(j, row, -1.0);
+            self.add_element(row, j, -1.0);
         }
 
         // RHS for voltage source

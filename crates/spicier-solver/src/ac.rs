@@ -6,7 +6,7 @@ use nalgebra::{DMatrix, DVector};
 use num_complex::Complex;
 
 use crate::error::Result;
-use crate::linear::solve_complex;
+use crate::linear::{SPARSE_THRESHOLD, solve_complex, solve_sparse_complex};
 
 /// AC sweep type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +40,8 @@ pub struct ComplexMna {
     matrix: DMatrix<Complex<f64>>,
     rhs: DVector<Complex<f64>>,
     num_nodes: usize,
+    /// Triplet accumulator for sparse matrix construction: (row, col, value).
+    pub triplets: Vec<(usize, usize, Complex<f64>)>,
 }
 
 impl ComplexMna {
@@ -50,6 +52,7 @@ impl ComplexMna {
             matrix: DMatrix::from_element(size, size, Complex::new(0.0, 0.0)),
             rhs: DVector::from_element(size, Complex::new(0.0, 0.0)),
             num_nodes,
+            triplets: Vec::new(),
         }
     }
 
@@ -78,6 +81,22 @@ impl ComplexMna {
         &mut self.rhs
     }
 
+    /// Get the total system size.
+    pub fn size(&self) -> usize {
+        self.matrix.nrows()
+    }
+
+    /// Add a value to the coefficient matrix at (row, col) and record the triplet.
+    pub fn add_element(&mut self, row: usize, col: usize, value: Complex<f64>) {
+        self.matrix[(row, col)] += value;
+        self.triplets.push((row, col, value));
+    }
+
+    /// Add a value to the RHS vector at the given row.
+    pub fn add_rhs(&mut self, row: usize, value: Complex<f64>) {
+        self.rhs[row] += value;
+    }
+
     /// Stamp a complex admittance between two nodes.
     ///
     /// For a two-terminal element with admittance Y between nodes i and j:
@@ -90,14 +109,14 @@ impl ComplexMna {
         y: Complex<f64>,
     ) {
         if let Some(i) = node_i {
-            self.matrix[(i, i)] += y;
+            self.add_element(i, i, y);
         }
         if let Some(j) = node_j {
-            self.matrix[(j, j)] += y;
+            self.add_element(j, j, y);
         }
         if let (Some(i), Some(j)) = (node_i, node_j) {
-            self.matrix[(i, j)] -= y;
-            self.matrix[(j, i)] -= y;
+            self.add_element(i, j, -y);
+            self.add_element(j, i, -y);
         }
     }
 
@@ -119,10 +138,10 @@ impl ComplexMna {
         current: Complex<f64>,
     ) {
         if let Some(p) = node_pos {
-            self.rhs[p] += current;
+            self.add_rhs(p, current);
         }
         if let Some(n) = node_neg {
-            self.rhs[n] -= current;
+            self.add_rhs(n, -current);
         }
     }
 
@@ -140,14 +159,14 @@ impl ComplexMna {
         let one = Complex::new(1.0, 0.0);
 
         if let Some(p) = node_pos {
-            self.matrix[(p, bi)] += one;
-            self.matrix[(bi, p)] += one;
+            self.add_element(p, bi, one);
+            self.add_element(bi, p, one);
         }
         if let Some(n) = node_neg {
-            self.matrix[(n, bi)] -= one;
-            self.matrix[(bi, n)] -= one;
+            self.add_element(n, bi, -one);
+            self.add_element(bi, n, -one);
         }
-        self.rhs[bi] += voltage;
+        self.add_rhs(bi, voltage);
     }
 
     /// Stamp an inductor in AC (impedance jωL).
@@ -167,16 +186,16 @@ impl ComplexMna {
 
         // KCL contributions (same structure as voltage source)
         if let Some(p) = node_pos {
-            self.matrix[(p, bi)] += one;
-            self.matrix[(bi, p)] += one;
+            self.add_element(p, bi, one);
+            self.add_element(bi, p, one);
         }
         if let Some(n) = node_neg {
-            self.matrix[(n, bi)] -= one;
-            self.matrix[(bi, n)] -= one;
+            self.add_element(n, bi, -one);
+            self.add_element(bi, n, -one);
         }
 
         // Impedance term: -jωL on the branch diagonal
-        self.matrix[(bi, bi)] -= Complex::new(0.0, omega * inductance);
+        self.add_element(bi, bi, -Complex::new(0.0, omega * inductance));
     }
 
     /// Stamp a VCCS (voltage-controlled current source) for small-signal gm.
@@ -193,18 +212,18 @@ impl ComplexMna {
         let gm_c = Complex::new(gm, 0.0);
         if let Some(op) = out_pos {
             if let Some(cp) = ctrl_pos {
-                self.matrix[(op, cp)] += gm_c;
+                self.add_element(op, cp, gm_c);
             }
             if let Some(cn) = ctrl_neg {
-                self.matrix[(op, cn)] -= gm_c;
+                self.add_element(op, cn, -gm_c);
             }
         }
         if let Some(on) = out_neg {
             if let Some(cp) = ctrl_pos {
-                self.matrix[(on, cp)] -= gm_c;
+                self.add_element(on, cp, -gm_c);
             }
             if let Some(cn) = ctrl_neg {
-                self.matrix[(on, cn)] += gm_c;
+                self.add_element(on, cn, gm_c);
             }
         }
     }
@@ -337,7 +356,11 @@ pub fn solve_ac(stamper: &dyn AcStamper, params: &AcParams) -> Result<AcResult> 
 
         stamper.stamp_ac(&mut mna, omega);
 
-        let solution = solve_complex(mna.matrix(), mna.rhs())?;
+        let solution = if mna.size() >= SPARSE_THRESHOLD {
+            solve_sparse_complex(mna.size(), &mna.triplets, mna.rhs())?
+        } else {
+            solve_complex(mna.matrix(), mna.rhs())?
+        };
 
         result.points.push(AcPoint {
             frequency: freq,

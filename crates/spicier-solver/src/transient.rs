@@ -4,7 +4,7 @@ use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
 
 use crate::error::Result;
-use crate::linear::solve_dense;
+use crate::linear::{SPARSE_THRESHOLD, solve_dense, solve_sparse};
 
 /// Integration method for transient analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,7 +276,12 @@ pub fn solve_transient(
         }
 
         // Solve
-        solution = solve_dense(mna.matrix(), mna.rhs())?;
+        let mna_size = num_nodes + num_vsources;
+        solution = if mna_size >= SPARSE_THRESHOLD {
+            solve_sparse(mna_size, &mna.triplets, mna.rhs())?
+        } else {
+            solve_dense(mna.matrix(), mna.rhs())?
+        };
 
         // Update reactive element states
         for cap in caps.iter_mut() {

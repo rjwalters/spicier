@@ -201,18 +201,18 @@ impl Mosfet {
         // Current flows from drain to source, controlled by gate-source voltage
         if let Some(di) = d {
             if let Some(gi) = g {
-                mna.matrix_mut()[(di, gi)] += gm;
+                mna.add_element(di, gi, gm);
             }
             if let Some(si) = s {
-                mna.matrix_mut()[(di, si)] -= gm;
+                mna.add_element(di, si, -gm);
             }
         }
         if let Some(si) = s {
             if let Some(gi) = g {
-                mna.matrix_mut()[(si, gi)] -= gm;
+                mna.add_element(si, gi, -gm);
             }
             if let Some(si2) = s {
-                mna.matrix_mut()[(si, si2)] += gm;
+                mna.add_element(si, si2, gm);
             }
         }
 

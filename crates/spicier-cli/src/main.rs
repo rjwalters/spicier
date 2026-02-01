@@ -435,23 +435,23 @@ impl AcStamper for NetlistAcStamper<'_> {
                     let br = mna.num_nodes() + branch_idx;
                     // Branch current couples to output nodes
                     if let Some(i) = out_pos {
-                        mna.matrix_mut()[(i, br)] += Complex::new(1.0, 0.0);
+                        mna.add_element(i, br, Complex::new(1.0, 0.0));
                     }
                     if let Some(i) = out_neg {
-                        mna.matrix_mut()[(i, br)] += Complex::new(-1.0, 0.0);
+                        mna.add_element(i, br, Complex::new(-1.0, 0.0));
                     }
                     // Branch equation
                     if let Some(i) = out_pos {
-                        mna.matrix_mut()[(br, i)] += Complex::new(1.0, 0.0);
+                        mna.add_element(br, i, Complex::new(1.0, 0.0));
                     }
                     if let Some(i) = out_neg {
-                        mna.matrix_mut()[(br, i)] += Complex::new(-1.0, 0.0);
+                        mna.add_element(br, i, Complex::new(-1.0, 0.0));
                     }
                     if let Some(i) = ctrl_pos {
-                        mna.matrix_mut()[(br, i)] += Complex::new(-gain, 0.0);
+                        mna.add_element(br, i, Complex::new(-gain, 0.0));
                     }
                     if let Some(i) = ctrl_neg {
-                        mna.matrix_mut()[(br, i)] += Complex::new(gain, 0.0);
+                        mna.add_element(br, i, Complex::new(gain, 0.0));
                     }
                 }
                 AcDeviceInfo::Vccs {
@@ -463,18 +463,18 @@ impl AcStamper for NetlistAcStamper<'_> {
                 } => {
                     if let Some(i) = out_pos {
                         if let Some(j) = ctrl_pos {
-                            mna.matrix_mut()[(i, j)] += Complex::new(gm, 0.0);
+                            mna.add_element(i, j, Complex::new(gm, 0.0));
                         }
                         if let Some(j) = ctrl_neg {
-                            mna.matrix_mut()[(i, j)] += Complex::new(-gm, 0.0);
+                            mna.add_element(i, j, Complex::new(-gm, 0.0));
                         }
                     }
                     if let Some(i) = out_neg {
                         if let Some(j) = ctrl_pos {
-                            mna.matrix_mut()[(i, j)] += Complex::new(-gm, 0.0);
+                            mna.add_element(i, j, Complex::new(-gm, 0.0));
                         }
                         if let Some(j) = ctrl_neg {
-                            mna.matrix_mut()[(i, j)] += Complex::new(gm, 0.0);
+                            mna.add_element(i, j, Complex::new(gm, 0.0));
                         }
                     }
                 }
@@ -486,10 +486,10 @@ impl AcStamper for NetlistAcStamper<'_> {
                 } => {
                     let br = mna.num_nodes() + vsource_branch_idx;
                     if let Some(i) = out_pos {
-                        mna.matrix_mut()[(i, br)] += Complex::new(gain, 0.0);
+                        mna.add_element(i, br, Complex::new(gain, 0.0));
                     }
                     if let Some(i) = out_neg {
-                        mna.matrix_mut()[(i, br)] += Complex::new(-gain, 0.0);
+                        mna.add_element(i, br, Complex::new(-gain, 0.0));
                     }
                 }
                 AcDeviceInfo::Ccvs {
@@ -502,18 +502,18 @@ impl AcStamper for NetlistAcStamper<'_> {
                     let br = mna.num_nodes() + branch_idx;
                     let ctrl_br = mna.num_nodes() + vsource_branch_idx;
                     if let Some(i) = out_pos {
-                        mna.matrix_mut()[(i, br)] += Complex::new(1.0, 0.0);
+                        mna.add_element(i, br, Complex::new(1.0, 0.0));
                     }
                     if let Some(i) = out_neg {
-                        mna.matrix_mut()[(i, br)] += Complex::new(-1.0, 0.0);
+                        mna.add_element(i, br, Complex::new(-1.0, 0.0));
                     }
                     if let Some(i) = out_pos {
-                        mna.matrix_mut()[(br, i)] += Complex::new(1.0, 0.0);
+                        mna.add_element(br, i, Complex::new(1.0, 0.0));
                     }
                     if let Some(i) = out_neg {
-                        mna.matrix_mut()[(br, i)] += Complex::new(-1.0, 0.0);
+                        mna.add_element(br, i, Complex::new(-1.0, 0.0));
                     }
-                    mna.matrix_mut()[(br, ctrl_br)] += Complex::new(-gain, 0.0);
+                    mna.add_element(br, ctrl_br, Complex::new(-gain, 0.0));
                 }
                 AcDeviceInfo::None => {}
             }

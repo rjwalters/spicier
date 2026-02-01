@@ -5,7 +5,7 @@ use spicier_core::NodeId;
 use spicier_core::mna::MnaSystem;
 
 use crate::error::Result;
-use crate::linear::solve_dense;
+use crate::linear::{SPARSE_THRESHOLD, solve_dense, solve_sparse};
 
 /// DC sweep parameters.
 #[derive(Debug, Clone)]
@@ -144,8 +144,14 @@ pub fn solve_dc_sweep(
 }
 
 /// Solve the DC operating point for a pre-assembled MNA system.
+///
+/// Automatically selects sparse or dense solver based on system size.
 pub fn solve_dc(mna: &MnaSystem) -> Result<DcSolution> {
-    let solution = solve_dense(mna.matrix(), mna.rhs())?;
+    let solution = if mna.size() >= SPARSE_THRESHOLD {
+        solve_sparse(mna.size(), &mna.triplets, mna.rhs())?
+    } else {
+        solve_dense(mna.matrix(), mna.rhs())?
+    };
 
     let num_nodes = mna.num_nodes;
     let num_vsources = mna.num_vsources;

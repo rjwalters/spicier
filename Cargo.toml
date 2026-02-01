@@ -29,6 +29,7 @@ anyhow = "1"
 nalgebra = "0.33"
 num-complex = "0.4"
 num-traits = "0.2"
+faer = "0.24"
 
 # Collections
 indexmap = "2"

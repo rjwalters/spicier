@@ -67,24 +67,24 @@ impl Stamp for Vcvs {
         // KCL at out+: ... + I_branch = 0
         // KCL at out-: ... - I_branch = 0
         if let Some(i) = op {
-            mna.matrix_mut()[(i, br)] += 1.0;
+            mna.add_element(i, br, 1.0);
         }
         if let Some(i) = on {
-            mna.matrix_mut()[(i, br)] -= 1.0;
+            mna.add_element(i, br, -1.0);
         }
 
         // Branch equation: V(out+) - V(out-) - gain * (V(ctrl+) - V(ctrl-)) = 0
         if let Some(i) = op {
-            mna.matrix_mut()[(br, i)] += 1.0;
+            mna.add_element(br, i, 1.0);
         }
         if let Some(i) = on {
-            mna.matrix_mut()[(br, i)] -= 1.0;
+            mna.add_element(br, i, -1.0);
         }
         if let Some(i) = cp {
-            mna.matrix_mut()[(br, i)] -= self.gain;
+            mna.add_element(br, i, -self.gain);
         }
         if let Some(i) = cn {
-            mna.matrix_mut()[(br, i)] += self.gain;
+            mna.add_element(br, i, self.gain);
         }
     }
 }
@@ -183,18 +183,18 @@ impl Stamp for Vccs {
         // KCL at out-: +gm * V(ctrl+) - gm * V(ctrl-) + ... = rhs
         if let Some(i) = op {
             if let Some(j) = cp {
-                mna.matrix_mut()[(i, j)] -= self.gm;
+                mna.add_element(i, j, -self.gm);
             }
             if let Some(j) = cn {
-                mna.matrix_mut()[(i, j)] += self.gm;
+                mna.add_element(i, j, self.gm);
             }
         }
         if let Some(i) = on {
             if let Some(j) = cp {
-                mna.matrix_mut()[(i, j)] += self.gm;
+                mna.add_element(i, j, self.gm);
             }
             if let Some(j) = cn {
-                mna.matrix_mut()[(i, j)] -= self.gm;
+                mna.add_element(i, j, -self.gm);
             }
         }
     }
@@ -274,10 +274,10 @@ impl Stamp for Cccs {
         // KCL at out+: ... + gain * I_vsource
         // KCL at out-: ... - gain * I_vsource
         if let Some(i) = op {
-            mna.matrix_mut()[(i, br)] += self.gain;
+            mna.add_element(i, br, self.gain);
         }
         if let Some(i) = on {
-            mna.matrix_mut()[(i, br)] -= self.gain;
+            mna.add_element(i, br, -self.gain);
         }
     }
 }
@@ -357,20 +357,20 @@ impl Stamp for Ccvs {
 
         // Branch current couples to output nodes:
         if let Some(i) = op {
-            mna.matrix_mut()[(i, br)] += 1.0;
+            mna.add_element(i, br, 1.0);
         }
         if let Some(i) = on {
-            mna.matrix_mut()[(i, br)] -= 1.0;
+            mna.add_element(i, br, -1.0);
         }
 
         // Branch equation: V(out+) - V(out-) - gain * I(Vsource) = 0
         if let Some(i) = op {
-            mna.matrix_mut()[(br, i)] += 1.0;
+            mna.add_element(br, i, 1.0);
         }
         if let Some(i) = on {
-            mna.matrix_mut()[(br, i)] -= 1.0;
+            mna.add_element(br, i, -1.0);
         }
-        mna.matrix_mut()[(br, ctrl_br)] -= self.gain;
+        mna.add_element(br, ctrl_br, -self.gain);
     }
 }
 

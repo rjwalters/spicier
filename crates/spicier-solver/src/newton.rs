@@ -4,7 +4,7 @@ use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
 
 use crate::error::Result;
-use crate::linear::solve_dense;
+use crate::linear::{SPARSE_THRESHOLD, solve_dense, solve_sparse};
 
 /// Convergence criteria for Newton-Raphson iteration.
 #[derive(Debug, Clone)]
@@ -86,7 +86,11 @@ pub fn solve_newton_raphson(
         stamper.stamp_at(&mut mna, &solution);
 
         // Solve the linearized system
-        let new_solution = solve_dense(mna.matrix(), mna.rhs())?;
+        let new_solution = if size >= SPARSE_THRESHOLD {
+            solve_sparse(size, &mna.triplets, mna.rhs())?
+        } else {
+            solve_dense(mna.matrix(), mna.rhs())?
+        };
 
         // Check convergence
         let converged = check_convergence(&solution, &new_solution, num_nodes, criteria);
