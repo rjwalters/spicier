@@ -1,6 +1,10 @@
 //! SPICE netlist parser.
 
+use std::collections::HashMap;
+
 use spicier_core::{Netlist, NodeId, units::parse_value};
+use spicier_devices::diode::{Diode, DiodeParams};
+use spicier_devices::mosfet::{Mosfet, MosfetParams, MosfetType};
 use spicier_devices::passive::{Capacitor, Inductor, Resistor};
 use spicier_devices::sources::{CurrentSource, VoltageSource};
 
@@ -73,19 +77,28 @@ pub fn parse_full(input: &str) -> Result<ParseResult> {
     parser.parse_all()
 }
 
+/// A model definition from .MODEL command.
+#[derive(Debug, Clone)]
+enum ModelDefinition {
+    Diode(DiodeParams),
+    Nmos(MosfetParams),
+    Pmos(MosfetParams),
+}
+
 /// Parser state.
 struct Parser<'a> {
     tokens: &'a [SpannedToken],
     pos: usize,
     netlist: Netlist,
     analyses: Vec<AnalysisCommand>,
-    node_map: std::collections::HashMap<String, NodeId>,
+    node_map: HashMap<String, NodeId>,
     next_current_index: usize,
+    models: HashMap<String, ModelDefinition>,
 }
 
 impl<'a> Parser<'a> {
     fn new(tokens: &'a [SpannedToken]) -> Self {
-        let mut node_map = std::collections::HashMap::new();
+        let mut node_map = HashMap::new();
         // Pre-register ground node aliases
         node_map.insert("0".to_string(), NodeId::GROUND);
         node_map.insert("gnd".to_string(), NodeId::GROUND);
@@ -98,6 +111,7 @@ impl<'a> Parser<'a> {
             analyses: Vec::new(),
             node_map,
             next_current_index: 0,
+            models: HashMap::new(),
         }
     }
 
@@ -182,6 +196,9 @@ impl<'a> Parser<'a> {
             }
             "TRAN" => {
                 self.parse_tran_command(line)?;
+            }
+            "MODEL" => {
+                self.parse_model_command(line)?;
             }
             _ => {
                 // Unknown command - skip to EOL
@@ -295,6 +312,12 @@ impl<'a> Parser<'a> {
             'L' => self.parse_inductor(name, line),
             'V' => self.parse_voltage_source(name, line),
             'I' => self.parse_current_source(name, line),
+            'D' => self.parse_diode(name, line),
+            'M' => self.parse_mosfet(name, line),
+            'E' => self.parse_vcvs(name, line),
+            'G' => self.parse_vccs(name, line),
+            'F' => self.parse_cccs(name, line),
+            'H' => self.parse_ccvs(name, line),
             _ => {
                 // Unknown element - skip line
                 self.skip_to_eol();
@@ -381,6 +404,319 @@ impl<'a> Parser<'a> {
 
         self.skip_to_eol();
         Ok(())
+    }
+
+    /// Parse .MODEL name type (param=value ...)
+    fn parse_model_command(&mut self, line: usize) -> Result<()> {
+        let model_name = self.expect_name(line)?;
+        let model_type = self.expect_name(line)?;
+
+        // Parse optional parameter list in parentheses or bare params
+        let mut params: Vec<(String, f64)> = Vec::new();
+
+        // Check for opening paren
+        let has_paren = matches!(self.peek(), Token::LParen);
+        if has_paren {
+            self.advance(); // consume '('
+        }
+
+        // Read param=value pairs until ')' or EOL
+        loop {
+            match self.peek() {
+                Token::RParen if has_paren => {
+                    self.advance();
+                    break;
+                }
+                Token::Eol | Token::Eof => break,
+                Token::Name(n) => {
+                    let pname = n.clone().to_uppercase();
+                    self.advance();
+                    // Expect '='
+                    if matches!(self.peek(), Token::Equals) {
+                        self.advance();
+                        let val = self.expect_value(line)?;
+                        params.push((pname, val));
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        let model_type_upper = model_type.to_uppercase();
+        let model = match model_type_upper.as_str() {
+            "D" => {
+                let mut dp = DiodeParams::default();
+                for (k, v) in &params {
+                    match k.as_str() {
+                        "IS" => dp.is = *v,
+                        "N" => dp.n = *v,
+                        "RS" => dp.rs = *v,
+                        "CJO" | "CJ0" => dp.cj0 = *v,
+                        "VJ" => dp.vj = *v,
+                        "BV" => dp.bv = *v,
+                        _ => {}
+                    }
+                }
+                ModelDefinition::Diode(dp)
+            }
+            "NMOS" => {
+                let mut mp = MosfetParams::nmos_default();
+                for (k, v) in &params {
+                    match k.as_str() {
+                        "VTO" => mp.vto = *v,
+                        "KP" => mp.kp = *v,
+                        "LAMBDA" => mp.lambda = *v,
+                        "COX" => mp.cox = *v,
+                        "W" => mp.w = *v,
+                        "L" => mp.l = *v,
+                        _ => {}
+                    }
+                }
+                ModelDefinition::Nmos(mp)
+            }
+            "PMOS" => {
+                let mut mp = MosfetParams::pmos_default();
+                for (k, v) in &params {
+                    match k.as_str() {
+                        "VTO" => mp.vto = *v,
+                        "KP" => mp.kp = *v,
+                        "LAMBDA" => mp.lambda = *v,
+                        "COX" => mp.cox = *v,
+                        "W" => mp.w = *v,
+                        "L" => mp.l = *v,
+                        _ => {}
+                    }
+                }
+                ModelDefinition::Pmos(mp)
+            }
+            _ => {
+                self.skip_to_eol();
+                return Ok(());
+            }
+        };
+
+        self.models.insert(model_name.to_uppercase(), model);
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse D1 anode cathode [modelname]
+    fn parse_diode(&mut self, name: &str, line: usize) -> Result<()> {
+        self.advance(); // consume name
+
+        let node_pos = self.expect_node(line)?; // anode
+        let node_neg = self.expect_node(line)?; // cathode
+
+        // Optional model name
+        let params = if let Token::Name(n) = self.peek() {
+            let model_name = n.clone().to_uppercase();
+            self.advance();
+            if let Some(ModelDefinition::Diode(dp)) = self.models.get(&model_name) {
+                dp.clone()
+            } else {
+                DiodeParams::default()
+            }
+        } else {
+            DiodeParams::default()
+        };
+
+        let diode = Diode::with_params(name, node_pos, node_neg, params);
+        self.netlist.add_device(diode);
+
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse M1 drain gate source bulk [modelname] [W=val L=val]
+    fn parse_mosfet(&mut self, name: &str, line: usize) -> Result<()> {
+        self.advance(); // consume name
+
+        let node_drain = self.expect_node(line)?;
+        let node_gate = self.expect_node(line)?;
+        let node_source = self.expect_node(line)?;
+        let _node_bulk = self.expect_node(line)?; // bulk node (not used in Level 1)
+
+        // Optional model name and W/L parameters
+        let mut mos_type = MosfetType::Nmos;
+        let mut params = MosfetParams::nmos_default();
+
+        // Try to read model name
+        if let Token::Name(n) = self.peek() {
+            let model_name = n.clone().to_uppercase();
+            // Check if it's a param assignment like W=...
+            if !model_name.contains('=') && model_name != "W" && model_name != "L" {
+                self.advance();
+                match self.models.get(&model_name) {
+                    Some(ModelDefinition::Nmos(mp)) => {
+                        mos_type = MosfetType::Nmos;
+                        params = mp.clone();
+                    }
+                    Some(ModelDefinition::Pmos(mp)) => {
+                        mos_type = MosfetType::Pmos;
+                        params = mp.clone();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Parse optional W=val L=val parameters
+        loop {
+            match self.peek() {
+                Token::Eol | Token::Eof => break,
+                Token::Name(n) => {
+                    let pname = n.clone().to_uppercase();
+                    self.advance();
+                    if matches!(self.peek(), Token::Equals) {
+                        self.advance();
+                        if let Ok(val) = self.expect_value(line) {
+                            match pname.as_str() {
+                                "W" => params.w = val,
+                                "L" => params.l = val,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        let mosfet = Mosfet::with_params(name, node_drain, node_gate, node_source, mos_type, params);
+        self.netlist.add_device(mosfet);
+
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse E1 out+ out- ctrl+ ctrl- gain (VCVS)
+    fn parse_vcvs(&mut self, name: &str, line: usize) -> Result<()> {
+        use spicier_devices::controlled::Vcvs;
+        self.advance(); // consume name
+
+        let out_pos = self.expect_node(line)?;
+        let out_neg = self.expect_node(line)?;
+        let ctrl_pos = self.expect_node(line)?;
+        let ctrl_neg = self.expect_node(line)?;
+        let gain = self.expect_value(line)?;
+
+        let current_index = self.next_current_index;
+        self.next_current_index += 1;
+
+        let vcvs = Vcvs::new(name, out_pos, out_neg, ctrl_pos, ctrl_neg, gain, current_index);
+        self.netlist.add_device(vcvs);
+
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse G1 out+ out- ctrl+ ctrl- gm (VCCS)
+    fn parse_vccs(&mut self, name: &str, line: usize) -> Result<()> {
+        use spicier_devices::controlled::Vccs;
+        self.advance(); // consume name
+
+        let out_pos = self.expect_node(line)?;
+        let out_neg = self.expect_node(line)?;
+        let ctrl_pos = self.expect_node(line)?;
+        let ctrl_neg = self.expect_node(line)?;
+        let gm = self.expect_value(line)?;
+
+        let vccs = Vccs::new(name, out_pos, out_neg, ctrl_pos, ctrl_neg, gm);
+        self.netlist.add_device(vccs);
+
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse F1 out+ out- Vsource gain (CCCS)
+    fn parse_cccs(&mut self, name: &str, line: usize) -> Result<()> {
+        use spicier_devices::controlled::Cccs;
+        self.advance(); // consume name
+
+        let out_pos = self.expect_node(line)?;
+        let out_neg = self.expect_node(line)?;
+        let vsource_name = self.expect_name(line)?;
+        let gain = self.expect_value(line)?;
+
+        // Defer branch index resolution: store the name for now, resolve after parsing
+        // For simplicity, look up the vsource branch index from the netlist
+        let branch_idx = self
+            .netlist
+            .find_vsource_branch_index(&vsource_name)
+            .ok_or_else(|| Error::ParseError {
+                line,
+                message: format!(
+                    "CCCS '{}' references unknown voltage source '{}'",
+                    name, vsource_name
+                ),
+            })?;
+
+        let cccs = Cccs::new(name, out_pos, out_neg, branch_idx, gain);
+        self.netlist.add_device(cccs);
+
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse H1 out+ out- Vsource gain (CCVS)
+    fn parse_ccvs(&mut self, name: &str, line: usize) -> Result<()> {
+        use spicier_devices::controlled::Ccvs;
+        self.advance(); // consume name
+
+        let out_pos = self.expect_node(line)?;
+        let out_neg = self.expect_node(line)?;
+        let vsource_name = self.expect_name(line)?;
+        let gain = self.expect_value(line)?;
+
+        let vsource_branch_idx = self
+            .netlist
+            .find_vsource_branch_index(&vsource_name)
+            .ok_or_else(|| Error::ParseError {
+                line,
+                message: format!(
+                    "CCVS '{}' references unknown voltage source '{}'",
+                    name, vsource_name
+                ),
+            })?;
+
+        let current_index = self.next_current_index;
+        self.next_current_index += 1;
+
+        let ccvs = Ccvs::new(
+            name,
+            out_pos,
+            out_neg,
+            vsource_branch_idx,
+            gain,
+            current_index,
+        );
+        self.netlist.add_device(ccvs);
+
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    fn expect_name(&mut self, line: usize) -> Result<String> {
+        match self.peek() {
+            Token::Name(n) => {
+                let n = n.clone();
+                self.advance();
+                Ok(n)
+            }
+            Token::Value(v) => {
+                let v = v.clone();
+                self.advance();
+                Ok(v)
+            }
+            _ => Err(Error::ParseError {
+                line,
+                message: "expected name".to_string(),
+            }),
+        }
     }
 
     fn expect_node(&mut self, line: usize) -> Result<NodeId> {
@@ -701,5 +1037,120 @@ R2 2 0 1k
         assert_eq!(result.analyses.len(), 2);
         assert!(matches!(result.analyses[0], AnalysisCommand::Op));
         assert!(matches!(result.analyses[1], AnalysisCommand::Dc { .. }));
+    }
+
+    #[test]
+    fn test_parse_diode() {
+        let input = r#"Diode Test
+V1 1 0 5
+R1 1 2 1k
+D1 2 0
+.end
+"#;
+
+        let netlist = parse(input).unwrap();
+        assert_eq!(netlist.num_devices(), 3);
+        assert!(netlist.has_nonlinear_devices());
+    }
+
+    #[test]
+    fn test_parse_diode_with_model() {
+        let input = r#"Diode Model Test
+.MODEL DMOD D (IS=1e-12 N=2)
+V1 1 0 5
+D1 1 0 DMOD
+.end
+"#;
+
+        let netlist = parse(input).unwrap();
+        assert_eq!(netlist.num_devices(), 2); // V1, D1
+        assert!(netlist.has_nonlinear_devices());
+    }
+
+    #[test]
+    fn test_parse_mosfet() {
+        let input = r#"MOSFET Test
+V1 1 0 5
+VG 2 0 3
+M1 1 2 0 0
+R1 1 0 10k
+.end
+"#;
+
+        let netlist = parse(input).unwrap();
+        assert_eq!(netlist.num_devices(), 4);
+        assert!(netlist.has_nonlinear_devices());
+    }
+
+    #[test]
+    fn test_parse_mosfet_with_model() {
+        let input = r#"MOSFET Model Test
+.MODEL NMOD NMOS (VTO=0.5 KP=1e-4)
+V1 1 0 5
+M1 1 2 0 0 NMOD W=20u L=1u
+.end
+"#;
+
+        let netlist = parse(input).unwrap();
+        assert_eq!(netlist.num_devices(), 2); // V1, M1
+    }
+
+    #[test]
+    fn test_parse_vcvs() {
+        let input = r#"VCVS Test
+V1 1 0 10
+R1 1 2 1k
+R2 3 0 1k
+E1 3 0 1 2 2.0
+.end
+"#;
+
+        let netlist = parse(input).unwrap();
+        assert_eq!(netlist.num_devices(), 4);
+        assert_eq!(netlist.num_current_vars(), 2); // V1 + E1
+    }
+
+    #[test]
+    fn test_parse_vccs() {
+        let input = r#"VCCS Test
+V1 1 0 10
+R1 2 0 1k
+G1 2 0 1 0 0.001
+.end
+"#;
+
+        let netlist = parse(input).unwrap();
+        assert_eq!(netlist.num_devices(), 3);
+        assert_eq!(netlist.num_current_vars(), 1); // V1 only (G has no current var)
+    }
+
+    #[test]
+    fn test_parse_cccs() {
+        let input = r#"CCCS Test
+V1 1 0 10
+R1 1 0 1k
+R2 2 0 1k
+F1 2 0 V1 3.0
+.end
+"#;
+
+        let netlist = parse(input).unwrap();
+        assert_eq!(netlist.num_devices(), 4);
+        assert_eq!(netlist.num_current_vars(), 1); // V1 only
+    }
+
+    #[test]
+    fn test_parse_ccvs() {
+        let input = r#"CCVS Test
+V1 1 0 10
+R1 1 0 1k
+R2 2 0 1k
+H1 2 0 V1 100.0
+.end
+"#;
+
+        let netlist = parse(input).unwrap();
+        assert_eq!(netlist.num_devices(), 4);
+        assert_eq!(netlist.num_current_vars(), 2); // V1 + H1
     }
 }

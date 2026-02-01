@@ -1,5 +1,7 @@
 //! Netlist: A complete circuit description ready for simulation.
 
+use nalgebra::DVector;
+
 use crate::mna::MnaSystem;
 use crate::node::NodeId;
 
@@ -41,7 +43,58 @@ pub enum AcDeviceInfo {
         node_neg: Option<usize>,
         ac_mag: f64,
     },
+    /// VCVS: voltage-controlled voltage source.
+    Vcvs {
+        out_pos: Option<usize>,
+        out_neg: Option<usize>,
+        ctrl_pos: Option<usize>,
+        ctrl_neg: Option<usize>,
+        branch_idx: usize,
+        gain: f64,
+    },
+    /// VCCS: voltage-controlled current source.
+    Vccs {
+        out_pos: Option<usize>,
+        out_neg: Option<usize>,
+        ctrl_pos: Option<usize>,
+        ctrl_neg: Option<usize>,
+        gm: f64,
+    },
+    /// CCCS: current-controlled current source.
+    Cccs {
+        out_pos: Option<usize>,
+        out_neg: Option<usize>,
+        vsource_branch_idx: usize,
+        gain: f64,
+    },
+    /// CCVS: current-controlled voltage source.
+    Ccvs {
+        out_pos: Option<usize>,
+        out_neg: Option<usize>,
+        vsource_branch_idx: usize,
+        branch_idx: usize,
+        gain: f64,
+    },
     /// Unknown or nonlinear device (skip in AC).
+    None,
+}
+
+/// Information about a device for transient analysis.
+#[derive(Debug, Clone)]
+pub enum TransientDeviceInfo {
+    /// Capacitor with node indices and capacitance.
+    Capacitor {
+        node_pos: Option<usize>,
+        node_neg: Option<usize>,
+        capacitance: f64,
+    },
+    /// Inductor with node indices and inductance.
+    Inductor {
+        node_pos: Option<usize>,
+        node_neg: Option<usize>,
+        inductance: f64,
+    },
+    /// Not a reactive device.
     None,
 }
 
@@ -69,6 +122,23 @@ pub trait Stamper: std::fmt::Debug + Send + Sync {
     /// Provide AC analysis information for this device.
     fn ac_info(&self) -> AcDeviceInfo {
         AcDeviceInfo::None
+    }
+
+    /// Whether this device is nonlinear (requires Newton-Raphson).
+    fn is_nonlinear(&self) -> bool {
+        false
+    }
+
+    /// Stamp the device linearized at the current solution vector.
+    ///
+    /// Default implementation falls back to the linear stamp.
+    fn stamp_nonlinear(&self, mna: &mut MnaSystem, _solution: &DVector<f64>) {
+        self.stamp(mna);
+    }
+
+    /// Provide transient analysis information for this device.
+    fn transient_info(&self) -> TransientDeviceInfo {
+        TransientDeviceInfo::None
     }
 }
 
@@ -171,6 +241,21 @@ impl Netlist {
     /// Get the number of devices.
     pub fn num_devices(&self) -> usize {
         self.devices.len()
+    }
+
+    /// Check if the netlist contains any nonlinear devices.
+    pub fn has_nonlinear_devices(&self) -> bool {
+        self.devices.iter().any(|d| d.is_nonlinear())
+    }
+
+    /// Stamp all devices into the MNA system linearized at the given solution.
+    ///
+    /// Nonlinear devices use their linearized stamp; linear devices use their
+    /// normal stamp.
+    pub fn stamp_nonlinear_into(&self, mna: &mut MnaSystem, solution: &DVector<f64>) {
+        for device in &self.devices {
+            device.stamp_nonlinear(mna, solution);
+        }
     }
 }
 

@@ -15,5 +15,5 @@ pub mod units;
 pub use circuit::Circuit;
 pub use element::Element;
 pub use error::{Error, Result};
-pub use netlist::{AcDeviceInfo, Netlist, Stamper};
+pub use netlist::{AcDeviceInfo, Netlist, Stamper, TransientDeviceInfo};
 pub use node::{Node, NodeId};

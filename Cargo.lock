@@ -653,6 +653,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nalgebra",
  "num-complex",
  "spicier-core",
  "spicier-devices",
@@ -676,6 +677,7 @@ name = "spicier-devices"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "nalgebra",
  "num-traits",
  "spicier-core",
  "thiserror",
@@ -686,6 +688,7 @@ name = "spicier-parser"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "nalgebra",
  "spicier-core",
  "spicier-devices",
  "spicier-solver",

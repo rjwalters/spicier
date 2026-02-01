@@ -11,9 +11,13 @@ use spicier_core::mna::MnaSystem;
 use spicier_core::netlist::AcDeviceInfo;
 use spicier_core::NodeId;
 use spicier_parser::{AcSweepType, AnalysisCommand, parse_full};
+use nalgebra::DVector;
+use spicier_core::netlist::TransientDeviceInfo;
 use spicier_solver::{
-    AcParams, AcStamper, AcSweepType as SolverAcSweepType, ComplexMna, DcSweepParams,
-    DcSweepStamper, DcSolution, solve_ac, solve_dc, solve_dc_sweep,
+    AcParams, AcStamper, AcSweepType as SolverAcSweepType, CapacitorState, ComplexMna,
+    ConvergenceCriteria, DcSweepParams, DcSweepStamper, DcSolution, InductorState,
+    IntegrationMethod, NonlinearStamper, TransientParams, TransientStamper, solve_ac, solve_dc,
+    solve_dc_sweep, solve_newton_raphson, solve_transient,
 };
 
 #[derive(Parser)]
@@ -113,14 +117,10 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
                 fstop,
             } => run_ac_analysis(&netlist, *sweep_type, *num_points, *fstart, *fstop)?,
             AnalysisCommand::Tran {
-                tstep: _,
-                tstop: _,
-                tstart: _,
-            } => {
-                println!("Transient analysis (.TRAN) via CLI is not yet supported.");
-                println!("Use the solver API directly for transient simulations.");
-                println!();
-            }
+                tstep,
+                tstop,
+                tstart,
+            } => run_transient(&netlist, *tstep, *tstop, *tstart)?
         }
     }
 
@@ -132,8 +132,48 @@ fn run_dc_op(netlist: &spicier_core::Netlist) -> Result<()> {
     println!("===========================");
     println!();
 
-    let mna = netlist.assemble_mna();
-    let solution = solve_dc(&mna).map_err(|e| anyhow::anyhow!("Solver error: {}", e))?;
+    let solution = if netlist.has_nonlinear_devices() {
+        let stamper = NetlistNonlinearStamper { netlist };
+        let criteria = ConvergenceCriteria::default();
+        let nr_result = solve_newton_raphson(
+            netlist.num_nodes(),
+            netlist.num_current_vars(),
+            &stamper,
+            &criteria,
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("Newton-Raphson error: {}", e))?;
+
+        if !nr_result.converged {
+            eprintln!(
+                "Warning: Newton-Raphson did not converge after {} iterations",
+                nr_result.iterations
+            );
+        } else {
+            println!(
+                "Converged in {} Newton-Raphson iterations.",
+                nr_result.iterations
+            );
+            println!();
+        }
+
+        // Convert NrResult to DcSolution
+        let num_nodes = netlist.num_nodes();
+        DcSolution {
+            node_voltages: DVector::from_iterator(
+                num_nodes,
+                nr_result.solution.iter().take(num_nodes).copied(),
+            ),
+            branch_currents: DVector::from_iterator(
+                netlist.num_current_vars(),
+                nr_result.solution.iter().skip(num_nodes).copied(),
+            ),
+            num_nodes,
+        }
+    } else {
+        let mna = netlist.assemble_mna();
+        solve_dc(&mna).map_err(|e| anyhow::anyhow!("Solver error: {}", e))?
+    };
 
     print_dc_solution(netlist, &solution);
 
@@ -314,6 +354,19 @@ impl DcSweepStamper for NetlistSweepStamper<'_> {
     }
 }
 
+/// Nonlinear stamper for Newton-Raphson DC analysis.
+///
+/// At each NR iteration, stamps all devices linearized at the current solution.
+struct NetlistNonlinearStamper<'a> {
+    netlist: &'a spicier_core::Netlist,
+}
+
+impl NonlinearStamper for NetlistNonlinearStamper<'_> {
+    fn stamp_at(&self, mna: &mut MnaSystem, solution: &DVector<f64>) {
+        self.netlist.stamp_nonlinear_into(mna, solution);
+    }
+}
+
 /// AC analysis stamper for a parsed netlist.
 ///
 /// Stamps resistors as real conductance, capacitors as jωC admittance,
@@ -371,6 +424,97 @@ impl AcStamper for NetlistAcStamper<'_> {
                         mna.stamp_current_source(node_pos, node_neg, Complex::new(ac_mag, 0.0));
                     }
                 }
+                AcDeviceInfo::Vcvs {
+                    out_pos,
+                    out_neg,
+                    ctrl_pos,
+                    ctrl_neg,
+                    branch_idx,
+                    gain,
+                } => {
+                    let br = mna.num_nodes() + branch_idx;
+                    // Branch current couples to output nodes
+                    if let Some(i) = out_pos {
+                        mna.matrix_mut()[(i, br)] += Complex::new(1.0, 0.0);
+                    }
+                    if let Some(i) = out_neg {
+                        mna.matrix_mut()[(i, br)] += Complex::new(-1.0, 0.0);
+                    }
+                    // Branch equation
+                    if let Some(i) = out_pos {
+                        mna.matrix_mut()[(br, i)] += Complex::new(1.0, 0.0);
+                    }
+                    if let Some(i) = out_neg {
+                        mna.matrix_mut()[(br, i)] += Complex::new(-1.0, 0.0);
+                    }
+                    if let Some(i) = ctrl_pos {
+                        mna.matrix_mut()[(br, i)] += Complex::new(-gain, 0.0);
+                    }
+                    if let Some(i) = ctrl_neg {
+                        mna.matrix_mut()[(br, i)] += Complex::new(gain, 0.0);
+                    }
+                }
+                AcDeviceInfo::Vccs {
+                    out_pos,
+                    out_neg,
+                    ctrl_pos,
+                    ctrl_neg,
+                    gm,
+                } => {
+                    if let Some(i) = out_pos {
+                        if let Some(j) = ctrl_pos {
+                            mna.matrix_mut()[(i, j)] += Complex::new(gm, 0.0);
+                        }
+                        if let Some(j) = ctrl_neg {
+                            mna.matrix_mut()[(i, j)] += Complex::new(-gm, 0.0);
+                        }
+                    }
+                    if let Some(i) = out_neg {
+                        if let Some(j) = ctrl_pos {
+                            mna.matrix_mut()[(i, j)] += Complex::new(-gm, 0.0);
+                        }
+                        if let Some(j) = ctrl_neg {
+                            mna.matrix_mut()[(i, j)] += Complex::new(gm, 0.0);
+                        }
+                    }
+                }
+                AcDeviceInfo::Cccs {
+                    out_pos,
+                    out_neg,
+                    vsource_branch_idx,
+                    gain,
+                } => {
+                    let br = mna.num_nodes() + vsource_branch_idx;
+                    if let Some(i) = out_pos {
+                        mna.matrix_mut()[(i, br)] += Complex::new(gain, 0.0);
+                    }
+                    if let Some(i) = out_neg {
+                        mna.matrix_mut()[(i, br)] += Complex::new(-gain, 0.0);
+                    }
+                }
+                AcDeviceInfo::Ccvs {
+                    out_pos,
+                    out_neg,
+                    vsource_branch_idx,
+                    branch_idx,
+                    gain,
+                } => {
+                    let br = mna.num_nodes() + branch_idx;
+                    let ctrl_br = mna.num_nodes() + vsource_branch_idx;
+                    if let Some(i) = out_pos {
+                        mna.matrix_mut()[(i, br)] += Complex::new(1.0, 0.0);
+                    }
+                    if let Some(i) = out_neg {
+                        mna.matrix_mut()[(i, br)] += Complex::new(-1.0, 0.0);
+                    }
+                    if let Some(i) = out_pos {
+                        mna.matrix_mut()[(br, i)] += Complex::new(1.0, 0.0);
+                    }
+                    if let Some(i) = out_neg {
+                        mna.matrix_mut()[(br, i)] += Complex::new(-1.0, 0.0);
+                    }
+                    mna.matrix_mut()[(br, ctrl_br)] += Complex::new(-gain, 0.0);
+                }
                 AcDeviceInfo::None => {}
             }
         }
@@ -383,4 +527,185 @@ impl AcStamper for NetlistAcStamper<'_> {
     fn num_vsources(&self) -> usize {
         self.netlist.num_current_vars()
     }
+}
+
+/// Transient stamper that stamps all non-reactive devices from a netlist.
+struct NetlistTransientStamper<'a> {
+    netlist: &'a spicier_core::Netlist,
+}
+
+impl TransientStamper for NetlistTransientStamper<'_> {
+    fn stamp_static(&self, mna: &mut MnaSystem) {
+        // Stamp all devices that are NOT capacitors or inductors.
+        // Capacitors and inductors are handled by companion models.
+        for device in self.netlist.devices() {
+            match device.transient_info() {
+                TransientDeviceInfo::Capacitor { .. } | TransientDeviceInfo::Inductor { .. } => {
+                    // Skip reactive devices; their companion models are stamped separately
+                }
+                TransientDeviceInfo::None => {
+                    device.stamp(mna);
+                }
+            }
+        }
+    }
+
+    fn num_nodes(&self) -> usize {
+        self.netlist.num_nodes()
+    }
+
+    fn num_vsources(&self) -> usize {
+        // Count only voltage source current vars, not inductor branch currents.
+        // In transient mode, inductors are replaced by companion models (conductance + current source)
+        // and don't need branch current variables.
+        let mut vs_count = 0;
+        for device in self.netlist.devices() {
+            match device.transient_info() {
+                TransientDeviceInfo::Inductor { .. } => {
+                    // Inductor companion model doesn't need branch current var
+                }
+                _ => {
+                    vs_count += device.num_current_vars();
+                }
+            }
+        }
+        vs_count
+    }
+}
+
+/// Build capacitor and inductor state vectors from the netlist for transient analysis.
+fn build_transient_state(
+    netlist: &spicier_core::Netlist,
+) -> (Vec<CapacitorState>, Vec<InductorState>) {
+    let mut caps = Vec::new();
+    let mut inds = Vec::new();
+
+    for device in netlist.devices() {
+        match device.transient_info() {
+            TransientDeviceInfo::Capacitor {
+                node_pos,
+                node_neg,
+                capacitance,
+            } => {
+                caps.push(CapacitorState::new(capacitance, node_pos, node_neg));
+            }
+            TransientDeviceInfo::Inductor {
+                node_pos,
+                node_neg,
+                inductance,
+            } => {
+                inds.push(InductorState::new(inductance, node_pos, node_neg));
+            }
+            TransientDeviceInfo::None => {}
+        }
+    }
+
+    (caps, inds)
+}
+
+fn run_transient(
+    netlist: &spicier_core::Netlist,
+    tstep: f64,
+    tstop: f64,
+    tstart: f64,
+) -> Result<()> {
+    println!(
+        "Transient Analysis (.TRAN {} {} {})",
+        tstep, tstop, tstart
+    );
+    println!("==========================================");
+    println!();
+
+    // 1. Solve DC operating point for initial conditions
+    let dc_solution = if netlist.has_nonlinear_devices() {
+        let stamper = NetlistNonlinearStamper { netlist };
+        let criteria = ConvergenceCriteria::default();
+        let nr_result = solve_newton_raphson(
+            netlist.num_nodes(),
+            netlist.num_current_vars(),
+            &stamper,
+            &criteria,
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("DC operating point error: {}", e))?;
+        nr_result.solution
+    } else {
+        let mna = netlist.assemble_mna();
+        let dc = solve_dc(&mna).map_err(|e| anyhow::anyhow!("DC operating point error: {}", e))?;
+        // Reconstruct full solution vector
+        let mut full = DVector::zeros(netlist.num_nodes() + netlist.num_current_vars());
+        for i in 0..dc.num_nodes {
+            full[i] = dc.node_voltages[i];
+        }
+        for i in 0..dc.branch_currents.len() {
+            full[dc.num_nodes + i] = dc.branch_currents[i];
+        }
+        full
+    };
+
+    // 2. Build reactive element state vectors
+    let (mut caps, mut inds) = build_transient_state(netlist);
+
+    // 3. Build transient stamper (stamps non-reactive devices)
+    let stamper = NetlistTransientStamper { netlist };
+
+    // 4. Run transient simulation with Trapezoidal method
+    let params = TransientParams {
+        tstop,
+        tstep,
+        method: IntegrationMethod::Trapezoidal,
+    };
+
+    // Adjust DC solution size if inductor companion models change MNA dimensions
+    let tran_size = stamper.num_nodes() + stamper.num_vsources();
+    let dc_for_tran = if dc_solution.len() != tran_size {
+        let mut adjusted = DVector::zeros(tran_size);
+        for i in 0..tran_size.min(dc_solution.len()) {
+            adjusted[i] = dc_solution[i];
+        }
+        adjusted
+    } else {
+        dc_solution
+    };
+
+    let result = solve_transient(&stamper, &mut caps, &mut inds, &params, &dc_for_tran)
+        .map_err(|e| anyhow::anyhow!("Transient error: {}", e))?;
+
+    // 5. Print tabular output
+    let num_nodes = netlist.num_nodes();
+
+    // Header
+    print!("{:>14}", "Time");
+    for i in 1..=num_nodes {
+        print!("{:>14}", format!("V({})", i));
+    }
+    println!();
+
+    let width = 14 * (1 + num_nodes);
+    println!("{}", "-".repeat(width));
+
+    // Data (skip points before tstart)
+    for point in &result.points {
+        if point.time < tstart - tstep * 0.5 {
+            continue;
+        }
+        print!("{:>14.6e}", point.time);
+        for i in 0..num_nodes {
+            let v = if i < point.solution.len() {
+                point.solution[i]
+            } else {
+                0.0
+            };
+            print!("{:>14.6}", v);
+        }
+        println!();
+    }
+
+    println!();
+    println!(
+        "Transient analysis complete ({} points).",
+        result.points.len()
+    );
+    println!();
+    Ok(())
 }

@@ -1,6 +1,8 @@
 //! MOSFET Level 1 device model.
 
+use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
+use spicier_core::netlist::TransientDeviceInfo;
 use spicier_core::{Element, NodeId, Stamper};
 
 use crate::stamp::Stamp;
@@ -185,7 +187,7 @@ impl Mosfet {
     /// - gds conductance between drain and source
     /// - gm * Vgs voltage-controlled current source from drain to source
     /// - Ieq = Ids - gds*Vds - gm*Vgs (companion current source)
-    pub fn stamp_nonlinear(&self, mna: &mut MnaSystem, vgs: f64, vds: f64) {
+    pub fn stamp_linearized_at(&self, mna: &mut MnaSystem, vgs: f64, vds: f64) {
         let (ids, gds, gm, _region) = self.evaluate(vgs, vds);
 
         let d = node_to_index(self.node_drain);
@@ -250,6 +252,33 @@ impl Element for Mosfet {
 impl Stamper for Mosfet {
     fn stamp(&self, mna: &mut MnaSystem) {
         Stamp::stamp(self, mna);
+    }
+
+    fn device_name(&self) -> &str {
+        &self.name
+    }
+
+    fn is_nonlinear(&self) -> bool {
+        true
+    }
+
+    fn stamp_nonlinear(&self, mna: &mut MnaSystem, solution: &DVector<f64>) {
+        let vg = node_to_index(self.node_gate)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vd = node_to_index(self.node_drain)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vs = node_to_index(self.node_source)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vgs = vg - vs;
+        let vds = vd - vs;
+        self.stamp_linearized_at(mna, vgs, vds);
+    }
+
+    fn transient_info(&self) -> TransientDeviceInfo {
+        TransientDeviceInfo::None
     }
 }
 

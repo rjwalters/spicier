@@ -1,7 +1,7 @@
 //! Passive device models: Resistor, Capacitor, Inductor.
 
 use spicier_core::mna::MnaSystem;
-use spicier_core::netlist::AcDeviceInfo;
+use spicier_core::netlist::{AcDeviceInfo, TransientDeviceInfo};
 use spicier_core::{Element, NodeId, Stamper};
 
 use crate::stamp::Stamp;
@@ -149,6 +149,14 @@ impl Stamper for Capacitor {
             capacitance: self.capacitance,
         }
     }
+
+    fn transient_info(&self) -> TransientDeviceInfo {
+        TransientDeviceInfo::Capacitor {
+            node_pos: node_to_index(self.node_pos),
+            node_neg: node_to_index(self.node_neg),
+            capacitance: self.capacitance,
+        }
+    }
 }
 
 /// An inductor element.
@@ -231,6 +239,14 @@ impl Stamper for Inductor {
             node_neg: node_to_index(self.node_neg),
             inductance: self.inductance,
             branch_idx: self.current_index,
+        }
+    }
+
+    fn transient_info(&self) -> TransientDeviceInfo {
+        TransientDeviceInfo::Inductor {
+            node_pos: node_to_index(self.node_pos),
+            node_neg: node_to_index(self.node_neg),
+            inductance: self.inductance,
         }
     }
 }

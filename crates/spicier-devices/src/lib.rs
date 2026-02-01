@@ -5,6 +5,7 @@
 //! - Sources: V, I (independent)
 //! - Nonlinear devices: Diode, MOSFET (future)
 
+pub mod controlled;
 pub mod diode;
 pub mod error;
 pub mod mosfet;

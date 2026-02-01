@@ -14,3 +14,4 @@ spicier-parser.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 num-complex.workspace = true
+nalgebra.workspace = true

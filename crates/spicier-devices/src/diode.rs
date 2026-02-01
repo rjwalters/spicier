@@ -1,6 +1,8 @@
 //! Diode device model using the Shockley equation.
 
+use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
+use spicier_core::netlist::TransientDeviceInfo;
 use spicier_core::{Element, NodeId, Stamper};
 
 use crate::stamp::Stamp;
@@ -108,7 +110,13 @@ impl Diode {
     /// At operating point Vd0, the diode is represented as:
     /// - A conductance Gd = dI/dV(Vd0)
     /// - A current source Ieq = Id(Vd0) - Gd * Vd0
-    pub fn stamp_nonlinear(&self, mna: &mut MnaSystem, vd: f64) {
+    pub fn stamp_linearized_at(&self, mna: &mut MnaSystem, vd: f64) {
+        // Apply voltage limiting consistently: evaluate uses limited voltage
+        // internally, so we must use the same limited voltage for ieq.
+        let vt = thermal_voltage(300.15);
+        let nvt = self.params.n * vt;
+        let vd = limit_voltage(vd, nvt);
+
         let (id, gd) = self.evaluate(vd);
         let ieq = id - gd * vd;
 
@@ -170,6 +178,29 @@ impl Element for Diode {
 impl Stamper for Diode {
     fn stamp(&self, mna: &mut MnaSystem) {
         Stamp::stamp(self, mna);
+    }
+
+    fn device_name(&self) -> &str {
+        &self.name
+    }
+
+    fn is_nonlinear(&self) -> bool {
+        true
+    }
+
+    fn stamp_nonlinear(&self, mna: &mut MnaSystem, solution: &DVector<f64>) {
+        let vp = node_to_index(self.node_pos)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vn = node_to_index(self.node_neg)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vd = vp - vn;
+        self.stamp_linearized_at(mna, vd);
+    }
+
+    fn transient_info(&self) -> TransientDeviceInfo {
+        TransientDeviceInfo::None
     }
 }
 

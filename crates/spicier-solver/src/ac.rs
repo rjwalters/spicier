@@ -53,6 +53,11 @@ impl ComplexMna {
         }
     }
 
+    /// Get the number of nodes (excluding ground).
+    pub fn num_nodes(&self) -> usize {
+        self.num_nodes
+    }
+
     /// Get a reference to the matrix.
     pub fn matrix(&self) -> &DMatrix<Complex<f64>> {
         &self.matrix
