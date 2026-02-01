@@ -318,17 +318,37 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
 
 **Goal:** Optimize performance with vectorization and parallelism.
 
-**Reference:** `mom-core/src/simd.rs` has runtime AVX-512/AVX2 detection and complex SIMD dot products. `mom-backend-cpu/src/simd.rs` has SIMD matvec. Adapt the `SimdCapability::detect()` pattern and complex arithmetic kernels.
+**Status:** Infrastructure ported from `mom` project. SIMD detection and kernels in place.
 
-### Tasks
+### Completed Tasks
+
+- [x] SIMD runtime detection (`spicier-simd` crate)
+  - `SimdCapability::detect()` — AVX-512, AVX2, or scalar fallback
+  - Runtime dispatch based on CPU features
+- [x] SIMD dot products
+  - Real f64 dot product with AVX-512/AVX2/scalar paths
+  - Complex C64 dot product with SIMD acceleration
+  - Conjugate dot product for Hermitian operations
+- [x] SIMD matrix-vector multiplication
+  - Real and complex matvec kernels
+  - Used by CPU dense operators
+- [x] Operator traits (`spicier-solver`)
+  - `RealOperator` trait for f64 matvec
+  - `ComplexOperator` trait for C64 matvec
+  - Both are `Send + Sync` for parallel use
+- [x] CPU dense operators (`spicier-backend-cpu` crate)
+  - `CpuRealDenseOperator` — f64 dense matvec using SIMD
+  - `CpuComplexDenseOperator` — C64 dense matvec using SIMD
+  - Implement `RealOperator`/`ComplexOperator` traits
+
+### Remaining Tasks
 
 - [ ] SIMD-friendly data layouts
   - Structure of Arrays (SoA) for devices
   - Aligned memory allocation
 - [ ] Vectorized device evaluation
   - Batch evaluate same-type devices
-  - Use portable SIMD or intrinsics
-  - Adapt complex SIMD dot product pattern from `mom-core/src/simd.rs`
+  - Use SIMD kernels for diode/MOSFET evaluation
 - [ ] Parallel matrix assembly
   - Per-device-type parallelism
   - Thread-safe stamping or reduction
@@ -347,30 +367,42 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
 
 **Goal:** Abstract compute dispatch behind a backend trait with automatic hardware detection, enabling GPU acceleration for sweeps, device evaluation, and large-circuit solves while maintaining a robust CPU fallback.
 
-**Reference implementation:** `../mom` (Method of Moments EM solver) already implements the trait-based backend abstraction with CUDA and Metal/wgpu backends in the same workspace pattern. Borrow heavily from:
-- `mom-solver/src/traits.rs` — `Operator`/`Kernel` trait design (default batch impl, GPU override)
-- `mom-backend-cuda/src/context.rs` — `CudaContext` with `cudarc` crate, `is_available()` probe
-- `mom-backend-cuda/src/dense_operator.rs` — dual-buffer (GPU + CPU fallback), threshold-based dispatch
-- `mom-backend-metal/src/context.rs` — `WgpuContext` with adapter/feature detection, power preference
-- `mom-backend-metal/src/dense_operator.rs` — wgpu compute pipeline, buffer binding
-- `mom-backend-metal/src/shader.wgsl` — WGSL compute shader for matvec
-- `mom-core/src/simd.rs` — runtime AVX-512/AVX2 detection, complex SIMD dot products
-- `mom-solver/src/gmres.rs` — GMRES iterative solver (useful for large sparse systems)
+**Status:** Infrastructure ported from `mom` project. Backend crates created with dense operators; sparse GPU operators and solver integration remain.
 
-**Key crates from mom:** `cudarc` v0.16 (CUDA), `wgpu` v23 (Metal/Vulkan/DX12), `pollster` (async GPU), `bytemuck` (GPU buffer transmutes)
+### 9a: ComputeBackend Enum & Auto-Detection ✅
 
-### 9a: ComputeBackend Trait & Auto-Detection
+- [x] `ComputeBackend` enum (`spicier-solver/src/backend.rs`)
+  - Variants: `Cpu`, `Cuda { device_id }`, `Metal { adapter_name }`
+  - `from_name()` for CLI parsing
+  - `Display` impl for user-friendly output
+- [x] CLI `--backend` flag (`spicier-cli`)
+  - Options: `auto`, `cpu`, `cuda`, `metal`
+  - Auto-detection: Metal first (macOS), then CUDA, then CPU
+  - Graceful fallback with warnings when requested backend unavailable
+  - Verbose mode prints selected backend
+- [x] CUDA context (`spicier-backend-cuda` crate)
+  - `CudaContext` with cudarc 0.16 dynamic loading
+  - `is_available()` probe without hard dependency on CUDA runtime
+  - cuBLAS handle for BLAS operations
+- [x] Metal/WebGPU context (`spicier-backend-metal` crate)
+  - `WgpuContext` with wgpu 23 (Metal/Vulkan/DX12 backends)
+  - `is_available()` probe via adapter request
+  - f64 shader support detection
+- [x] Dense GPU operators (both crates)
+  - `CudaRealDenseOperator` / `CudaComplexDenseOperator` — cuBLAS dgemv/zgemv
+  - `WgpuRealDenseOperator` / `WgpuComplexDenseOperator` — WGSL compute shaders
+  - CPU fallback threshold (small matrices stay on CPU)
+  - Implement `RealOperator`/`ComplexOperator` traits
+- [x] GMRES iterative solver (`spicier-solver/src/gmres.rs`)
+  - Works with any `ComplexOperator` or `RealOperator`
+  - Configurable restart, tolerance, max iterations
+  - Givens rotations for stable least-squares
 
-- [ ] `ComputeBackend` trait
-  - Trait methods: `solve`, `batch_solve`, `batch_device_eval`, `fft`
-  - CPU implementation wraps existing sparse solvers (faer/sprs)
-  - Trait object or enum dispatch at runtime
-  - Follow mom's `Operator`/`Kernel` pattern: default batch impls call single-element, GPU overrides for parallel
-- [ ] Automatic hardware detection
-  - CUDA: `CudarCudaContext::new(0).is_ok()` probe (adapt from `mom-backend-cuda/src/context.rs`)
-  - Metal/wgpu: adapter request with feature detection (adapt from `mom-backend-metal/src/context.rs`)
-  - Fallback: CPU backend always available
-  - CLI flag `--backend=auto|cpu|cuda|metal` to override
+### Remaining Tasks
+
+- [ ] Wire GPU operators into analysis paths
+  - Use GPU dense operators for AC analysis matrix solves
+  - Use GPU operators for GMRES preconditioning
 - [ ] Size-based dispatch heuristic
   - Small circuits (<1k nodes) stay on CPU even when GPU is available
   - Threshold tunable via config; auto-calibrate with a one-time microbenchmark

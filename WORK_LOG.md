@@ -268,3 +268,83 @@ Integrated faer 0.24 (pure Rust) for sparse LU factorization alongside the exist
 **Benchmarks:** Updated with `solve_sparse` group at sizes 10/50/100/500 for crossover analysis
 
 **Files modified:** Cargo.toml (workspace + solver), mna.rs, linear.rs, dc.rs, newton.rs, transient.rs, ac.rs, controlled.rs, mosfet.rs, main.rs, solver.rs (bench)
+
+### SIMD, GMRES, and GPU Backend Infrastructure
+
+Ported reusable infrastructure from the `mom` (Method of Moments EM solver) project to accelerate Phases 8 and 9. This brings in battle-tested SIMD kernels, operator traits, and GPU backend abstractions.
+
+**New crates:**
+
+| Crate | Purpose | Source |
+|-------|---------|--------|
+| `spicier-simd` | SIMD detection + dot products | `mom-core/src/simd.rs`, `mom-backend-cpu/src/simd.rs` |
+| `spicier-backend-cpu` | CPU dense operators using SIMD | `mom-backend-cpu/src/dense_operator.rs` |
+| `spicier-backend-cuda` | CUDA context + cuBLAS operators | `mom-backend-cuda/` |
+| `spicier-backend-metal` | WebGPU/Metal context + compute shaders | `mom-backend-metal/` |
+
+**spicier-simd (new crate):**
+- `SimdCapability` enum with `detect()` — runtime AVX-512/AVX2/scalar selection
+- `real_dot()`, `real_matvec()` — f64 SIMD kernels
+- `complex_dot()`, `complex_matvec()` — C64 SIMD kernels
+- `conjugate_dot()` — Hermitian dot product for GMRES
+- 19 unit tests
+
+**spicier-solver additions:**
+- `RealOperator` trait — `dim()`, `apply(&[f64], &mut [f64])`
+- `ComplexOperator` trait — `dim()`, `apply(&[C64], &mut [C64])`
+- `ComputeBackend` enum — `Cpu`, `Cuda { device_id }`, `Metal { adapter_name }`
+- `from_name()` for CLI parsing, `Display` impl
+- GMRES iterative solver (`gmres.rs`)
+  - Generic over `ComplexOperator`/`RealOperator`
+  - Configurable restart (default 30), tolerance (1e-10), max iterations (1000)
+  - Givens rotations for stable least-squares minimization
+  - 9 unit tests
+
+**spicier-backend-cpu (new crate):**
+- `CpuRealDenseOperator` — f64 dense matvec using `real_matvec()`
+- `CpuComplexDenseOperator` — C64 dense matvec using `complex_matvec()`
+- Both implement `RealOperator`/`ComplexOperator` traits
+- 12 unit tests
+
+**spicier-backend-cuda (new crate):**
+- `CudaContext` — cudarc 0.16 with dynamic CUDA loading
+- `is_available()` — probes for CUDA without hard runtime dependency
+- `CudaRealDenseOperator` — cuBLAS `dgemv` with CPU fallback
+- `CudaComplexDenseOperator` — cuBLAS `zgemv` with CPU fallback
+- CPU fallback threshold (default 64) for small matrices
+- 4 unit tests (graceful skip on non-CUDA systems)
+
+**spicier-backend-metal (new crate):**
+- `WgpuContext` — wgpu 23 with Metal/Vulkan/DX12 backend selection
+- `is_available()` — probes for GPU adapter
+- `supports_f64()` — checks for SHADER_F64 feature
+- `WgpuRealDenseOperator` — WGSL compute shader (`real_matvec.wgsl`)
+- `WgpuComplexDenseOperator` — WGSL compute shader (`complex_matvec.wgsl`)
+- f32 GPU computation with f64 CPU fallback for precision
+- CPU fallback threshold (default 64) for small matrices
+- 6 unit tests
+
+**CLI integration:**
+- New `--backend` flag: `auto` (default), `cpu`, `cuda`, `metal`
+- Auto-detection priority: Metal (macOS) → CUDA → CPU
+- Graceful fallback with warnings when requested backend unavailable
+- Verbose mode (`-v`) prints selected backend
+- GPU backends behind feature flags (`cuda`, `metal`) to keep default binary lightweight
+
+**Tests:** 169 total passing (was 106), clippy clean
+
+**Files added:**
+- `crates/spicier-simd/` (4 modules + lib.rs)
+- `crates/spicier-backend-cpu/` (dense_operator.rs + lib.rs)
+- `crates/spicier-backend-cuda/` (context.rs, error.rs, dense_operator.rs + lib.rs)
+- `crates/spicier-backend-metal/` (context.rs, error.rs, dense_operator.rs, real_matvec.wgsl, complex_matvec.wgsl + lib.rs)
+- `crates/spicier-solver/src/operator.rs`
+- `crates/spicier-solver/src/gmres.rs`
+- `crates/spicier-solver/src/backend.rs`
+
+**Files modified:**
+- `Cargo.toml` (workspace members + dependencies)
+- `crates/spicier-solver/Cargo.toml` (spicier-simd dependency)
+- `crates/spicier-solver/src/lib.rs` (new module exports)
+- `crates/spicier-cli/Cargo.toml` (optional GPU backend deps)
+- `crates/spicier-cli/src/main.rs` (--backend flag + detect_backend())
