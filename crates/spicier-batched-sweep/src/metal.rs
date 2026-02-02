@@ -1,25 +1,20 @@
 //! Metal backend implementation for batched LU solving.
 //!
 //! This module provides GPU-accelerated batched LU solving on Apple Silicon
-//! using Metal via WebGPU (wgpu).
-//!
-//! Note: Full Metal batched LU support is not yet implemented. This module
-//! currently provides a CPU fallback but correctly detects Metal availability.
+//! using Metal via WebGPU (wgpu) compute shaders.
 
 use crate::error::{BatchedSweepError, Result};
 use crate::solver::{BackendType, BatchedLuSolver, BatchedSolveResult, GpuBatchConfig};
+use spicier_backend_metal::{MetalBatchedLuSolver as MetalSolver, WgpuContext};
+use std::sync::Arc;
 
 /// Metal-accelerated batched LU solver.
 ///
-/// Uses WebGPU/Metal for efficient parallel solving on Apple GPUs (M1, M2, M3, etc.).
-///
-/// Note: Full batched LU using Metal compute shaders is not yet implemented.
-/// This solver currently falls back to CPU but provides the infrastructure
-/// for future Metal acceleration.
+/// Uses wgpu/Metal compute shaders for efficient parallel solving
+/// on Apple GPUs (M1, M2, M3, etc.).
 pub struct MetalBatchedSolver {
+    solver: MetalSolver,
     config: GpuBatchConfig,
-    #[allow(dead_code)]
-    available: bool,
 }
 
 impl MetalBatchedSolver {
@@ -28,16 +23,21 @@ impl MetalBatchedSolver {
     /// # Errors
     /// Returns an error if Metal/WebGPU initialization fails.
     pub fn new(config: GpuBatchConfig) -> Result<Self> {
-        // Check if Metal/WebGPU is available
-        let available = spicier_backend_metal::context::WgpuContext::is_available();
+        let ctx = WgpuContext::new().map_err(|e| {
+            BatchedSweepError::BackendInit(format!("Metal/WebGPU context creation failed: {}", e))
+        })?;
 
-        if !available {
-            return Err(BatchedSweepError::BackendInit(
-                "Metal/WebGPU not available on this system".to_string(),
-            ));
-        }
+        let metal_config = spicier_backend_metal::GpuBatchConfig {
+            min_batch_size: config.min_batch_size,
+            min_matrix_size: config.min_matrix_size,
+            max_matrix_size: spicier_backend_metal::MAX_MATRIX_SIZE,
+        };
 
-        Ok(Self { config, available })
+        let solver = MetalSolver::with_config(Arc::new(ctx), metal_config).map_err(|e| {
+            BatchedSweepError::BackendInit(format!("Metal solver creation failed: {}", e))
+        })?;
+
+        Ok(Self { solver, config })
     }
 
     /// Try to create a Metal solver, returning None if unavailable.
@@ -54,68 +54,20 @@ impl BatchedLuSolver for MetalBatchedSolver {
         n: usize,
         batch_size: usize,
     ) -> Result<BatchedSolveResult> {
-        // TODO: Implement Metal batched LU using MPS
-        // For now, fall back to CPU implementation
-        log::warn!("Metal batched LU not yet implemented, falling back to CPU");
-
-        use nalgebra::{DMatrix, DVector};
-
-        let expected_matrix_len = batch_size * n * n;
-        let expected_rhs_len = batch_size * n;
-
-        if matrices.len() != expected_matrix_len {
-            return Err(BatchedSweepError::InvalidDimension(format!(
-                "Expected {} matrix elements, got {}",
-                expected_matrix_len,
-                matrices.len()
-            )));
-        }
-
-        if rhs.len() != expected_rhs_len {
-            return Err(BatchedSweepError::InvalidDimension(format!(
-                "Expected {} RHS elements, got {}",
-                expected_rhs_len,
-                rhs.len()
-            )));
-        }
-
-        let mut solutions = Vec::with_capacity(expected_rhs_len);
-        let mut singular_indices = Vec::new();
-
-        for i in 0..batch_size {
-            let mat_start = i * n * n;
-            let mat_data = &matrices[mat_start..mat_start + n * n];
-            let matrix = DMatrix::from_column_slice(n, n, mat_data);
-
-            let rhs_start = i * n;
-            let rhs_data = &rhs[rhs_start..rhs_start + n];
-            let b = DVector::from_column_slice(rhs_data);
-
-            let lu = nalgebra::linalg::LU::new(matrix);
-            match lu.solve(&b) {
-                Some(solution) => {
-                    solutions.extend(solution.iter());
-                }
-                None => {
-                    solutions.extend(std::iter::repeat(0.0).take(n));
-                    singular_indices.push(i);
-                }
-            }
-        }
+        let metal_result = self.solver.solve_batch(matrices, rhs, n, batch_size).map_err(|e| {
+            BatchedSweepError::Backend(format!("Metal solve failed: {}", e))
+        })?;
 
         Ok(BatchedSolveResult {
-            solutions,
-            singular_indices,
-            n,
-            batch_size,
+            solutions: metal_result.solutions,
+            singular_indices: metal_result.singular_indices,
+            n: metal_result.n,
+            batch_size: metal_result.batch_size,
         })
     }
 
     fn should_use_gpu(&self, matrix_size: usize, batch_size: usize) -> bool {
-        // TODO: Enable when Metal batched LU is implemented
-        // For now, return false to trigger CPU fallback
-        let _ = (matrix_size, batch_size);
-        false
+        self.solver.should_use_gpu(matrix_size, batch_size)
     }
 
     fn backend_type(&self) -> BackendType {
@@ -164,8 +116,8 @@ mod tests {
         assert!(result.singular_indices.is_empty());
 
         let sol0 = result.solution(0).unwrap();
-        assert!((sol0[0] - 1.0).abs() < 1e-10);
-        assert!((sol0[1] - 2.0).abs() < 1e-10);
+        assert!((sol0[0] - 1.0).abs() < 1e-4);
+        assert!((sol0[1] - 2.0).abs() < 1e-4);
     }
 
     #[test]
@@ -179,5 +131,21 @@ mod tests {
         };
 
         assert_eq!(solver.backend_type(), BackendType::Metal);
+    }
+
+    #[test]
+    fn test_metal_should_use_gpu() {
+        let solver = match try_create_solver() {
+            Some(s) => s,
+            None => {
+                eprintln!("Skipping test: Metal not available");
+                return;
+            }
+        };
+
+        // Uses GpuBatchConfig defaults from batched-sweep: min_batch=16, min_matrix=32
+        assert!(!solver.should_use_gpu(16, 100));  // Matrix too small (16 < 32)
+        assert!(!solver.should_use_gpu(64, 8));    // Batch too small (8 < 16)
+        assert!(solver.should_use_gpu(64, 32));    // Both OK (64 >= 32, 32 >= 16)
     }
 }
