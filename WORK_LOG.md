@@ -1205,3 +1205,27 @@ B4 out 0 V=V(in)*V(in)
 - Parser tests for B element syntax
 
 **Tests:** 297 total passing (33 new behavioral/expression tests)
+
+### CLI Refactoring
+
+Refactored `spicier-cli/src/main.rs` from 1169 lines into 8 focused modules for improved maintainability.
+
+**New module structure:**
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `main.rs` | 178 | CLI definition + analysis dispatch |
+| `stampers.rs` | 364 | All stamper trait implementations |
+| `analysis/dc.rs` | 251 | DC operating point + sweep |
+| `analysis/transient.rs` | 163 | Transient time-domain analysis |
+| `analysis/ac.rs` | 127 | AC small-signal analysis |
+| `output.rs` | 120 | Print formatting helpers |
+| `backend.rs` | 62 | Compute backend detection |
+| `analysis/mod.rs` | 9 | Module re-exports |
+
+**Benefits:**
+- Each analysis type isolated in its own file
+- Stamper implementations consolidated (DC sweep, AC, transient, nonlinear)
+- Output formatting separated from analysis logic
+- Backend detection isolated from CLI dispatch
+- `main.rs` now shows CLI structure at a glance
