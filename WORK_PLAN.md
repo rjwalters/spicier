@@ -628,8 +628,8 @@ spice21 has 87 tests with golden data for ring oscillators and device characteri
 - [x] `cargo clippy` clean (all targets)
 - [x] `cargo fmt` consistent
 - [x] `cargo doc` builds without warnings
-- [ ] `cargo publish --dry-run` succeeds for each crate
-- [ ] Minimum Rust version (MSRV) documented and tested
+- [ ] `cargo publish --dry-run` succeeds for each crate (requires publishing in order)
+- [x] Minimum Rust version (MSRV) documented and tested (1.85 for edition 2024)
 
 ### 11e: Release Strategy
 
