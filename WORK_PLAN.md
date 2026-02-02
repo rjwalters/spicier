@@ -529,12 +529,190 @@ For circuits with 50k+ nodes, sparse LU factorization itself is the bottleneck.
 
 ---
 
+## Phase 10: Validation Test Suite
+
+**Goal:** Import and adapt test circuits from ngspice and spice21 to validate solver accuracy against established SPICE implementations.
+
+### 10a: ngspice Test Import
+
+ngspice provides 113 regression tests with expected outputs and 462 example circuits.
+
+**High-priority imports:**
+- [ ] Basic circuit validation
+  - `rc.cir`, `lowpass.cir` — RC filter validation
+  - Resistor divider, current divider circuits
+  - Simple amplifier circuits from `tests/general/`
+- [ ] Parser validation
+  - `tests/regression/parser/` — expression parsing edge cases
+  - `tests/regression/misc/` — bug fixes and parser validation (13 tests)
+- [ ] Transient validation
+  - LC oscillator frequency verification
+  - RC charge/discharge curves
+  - PULSE/SIN/PWL source waveforms
+- [ ] AC validation
+  - Low-pass filter -3dB points and rolloff
+  - High-pass filter response
+  - Pole-zero analysis circuits
+
+**Test infrastructure:**
+- [ ] Create `tests/ngspice_compat/` directory
+- [ ] Implement toleranced comparison (relative + absolute tolerance)
+- [ ] Add `.out` baseline file support or JSON golden data
+- [ ] CI integration for regression testing
+
+### 10b: spice21 Test Adaptation
+
+spice21 has 87 tests with golden data for ring oscillators and device characterization.
+
+- [ ] Ring oscillator validation
+  - 3-stage CMOS ring oscillator (transient frequency)
+  - NMOS-R and PMOS-R variants
+- [ ] Device characterization
+  - Diode-connected MOSFET I-V curves
+  - CMOS inverter DC transfer curve
+- [ ] Hierarchical circuit validation
+  - Module instantiation and port mapping
+
+### 10c: Cross-Simulator Comparison
+
+- [ ] Run identical circuits through ngspice and spicier
+- [ ] Compare DC operating points (voltage/current tolerance)
+- [ ] Compare transient waveforms (RMS error, peak detection)
+- [ ] Compare AC magnitude/phase (dB tolerance, phase tolerance)
+- [ ] Document any intentional deviations from ngspice behavior
+
+**Dependencies:** Core analysis types complete (Phases 4-7)
+
+**Acceptance Criteria:**
+- 50+ ngspice test circuits pass with <1% error vs ngspice results
+- Ring oscillator frequency within 5% of spice21 golden data
+- All existing 297 tests continue to pass
+
+---
+
+## Phase 11: crates.io Release Preparation
+
+**Goal:** Prepare spicier crates for publication on crates.io.
+
+### 11a: API Stability Review
+
+- [ ] Review public API surface for each crate
+  - `spicier-core`: Circuit, Node, MnaSystem, Netlist
+  - `spicier-solver`: DC, AC, transient solvers, GMRES, operators
+  - `spicier-devices`: Device models, stamps, waveforms
+  - `spicier-parser`: Parser, AST types, parse functions
+  - `spicier-simd`: SimdCapability, dot products, matvec
+- [ ] Mark internal APIs as `pub(crate)` where appropriate
+- [ ] Ensure `#[non_exhaustive]` on enums that may grow
+- [ ] Stabilize error types and Result patterns
+
+### 11b: Documentation
+
+- [ ] Rustdoc for all public types and functions
+- [ ] Crate-level documentation with examples
+- [ ] README.md for each crate
+- [ ] Example programs in `examples/` directories
+- [ ] CHANGELOG.md with version history
+
+### 11c: Metadata & Licensing
+
+- [ ] Finalize license (BSD/MIT/Apache-2.0)
+- [ ] Add LICENSE file to repository root
+- [ ] Complete Cargo.toml metadata for each crate:
+  - `license`, `description`, `repository`, `keywords`, `categories`
+  - `readme`, `documentation` links
+- [ ] Verify crate names available on crates.io
+
+### 11d: Quality Checks
+
+- [ ] `cargo clippy` clean (all targets)
+- [ ] `cargo fmt` consistent
+- [ ] `cargo doc` builds without warnings
+- [ ] `cargo publish --dry-run` succeeds for each crate
+- [ ] Minimum Rust version (MSRV) documented and tested
+
+### 11e: Release Strategy
+
+- [ ] Define version 0.1.0 scope
+- [ ] Determine crate publication order (dependencies first)
+- [ ] Create GitHub release with changelog
+- [ ] Announce on relevant forums (Reddit r/rust, etc.)
+
+**Dependencies:** Phase 10 (validation gives confidence for release)
+
+**Acceptance Criteria:**
+- All crates pass `cargo publish --dry-run`
+- Documentation coverage >80% for public API
+- License and metadata complete
+
+---
+
+## Phase 12: Extended Features
+
+**Goal:** Add commonly-requested SPICE features for broader compatibility.
+
+### 12a: .PARAM / Parameter Expressions
+
+Parameter expressions enable parameterized circuits and design exploration.
+
+- [ ] `.PARAM name = expression` parsing
+- [ ] Parameter substitution in element values
+- [ ] Parameter expressions with math operations
+- [ ] Nested parameter references
+- [ ] Global vs local parameter scoping
+- [ ] Integration with DC sweep (sweep parameter values)
+
+### 12b: .MEASURE Statements
+
+Post-processing measurements extract key metrics from simulation results.
+
+- [ ] `.MEAS TRAN` — transient measurements
+  - `TRIG`/`TARG` for timing measurements
+  - `FIND`/`WHEN` for value extraction
+  - `AVG`, `RMS`, `MIN`, `MAX`, `PP` (peak-to-peak)
+- [ ] `.MEAS DC` — DC sweep measurements
+- [ ] `.MEAS AC` — AC analysis measurements
+- [ ] Measurement result output and export
+
+### 12c: Noise Analysis
+
+Small-signal noise analysis for analog circuit design.
+
+- [ ] Thermal noise (resistors): 4kTR
+- [ ] Shot noise (diodes, BJTs): 2qI
+- [ ] Flicker noise (MOSFETs): Kf/f
+- [ ] Noise figure calculation
+- [ ] Input/output referred noise
+- [ ] Noise spectral density plots
+
+### 12d: Additional Device Models
+
+- [ ] BJT (Gummel-Poon model)
+- [ ] JFET
+- [ ] BSIM3v3 MOSFET
+- [ ] BSIM4 MOSFET (partial — complex model)
+- [ ] Transmission lines (lossless, lossy)
+
+**Dependencies:** Core functionality complete
+
+---
+
 ## Future Considerations
 
+### Completed
 - [x] Subcircuit/hierarchical netlists (.SUBCKT/.ENDS) — implemented with nested expansion
 - [x] Behavioral sources (B elements) — expression AST with voltage/current/time refs, auto-diff for NR
-- Noise analysis
-- Additional MOSFET models (BSIM3/BSIM4)
+
+### Planned (Phase 12)
+- [ ] .PARAM / parameter expressions
+- [ ] .MEASURE statements
+- [ ] Noise analysis
+- [ ] Additional MOSFET models (BSIM3/BSIM4)
+
+### Long-term / Research
 - S-parameter analysis
-- .MEASURE statements
-- .PARAM / parameter expressions
+- Mixed-signal / event-driven simulation (XSPICE-style)
+- Physics-based device models (CIDER-style)
+- Optimization / tuning (.OPTIM)
+- Verilog-A model import
+- Distributed simulation for very large circuits

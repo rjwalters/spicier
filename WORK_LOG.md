@@ -1229,3 +1229,77 @@ Refactored `spicier-cli/src/main.rs` from 1169 lines into 8 focused modules for 
 - Output formatting separated from analysis logic
 - Backend detection isolated from CLI dispatch
 - `main.rs` now shows CLI structure at a glance
+
+### GMRES Refactoring
+
+Refactored `spicier-solver/src/gmres.rs` from 1366 lines into 4 focused modules.
+
+**New module structure:**
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `gmres/mod.rs` | 65 | Config and re-exports |
+| `gmres/helpers.rs` | 90 | Givens rotation and vector norm utilities |
+| `gmres/real.rs` | 380 | Real-valued GMRES (unpreconditioned + preconditioned) |
+| `gmres/complex.rs` | 420 | Complex-valued GMRES (unpreconditioned + preconditioned) |
+
+### Parser Refactoring
+
+Refactored `spicier-parser/src/parser.rs` from 2496 lines into 6 focused modules.
+
+**New module structure:**
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `parser/mod.rs` | 815 | Main parsing logic and tests |
+| `parser/elements.rs` | 548 | Element parsing (R, C, L, V, I, D, M, B, X) |
+| `parser/commands.rs` | 568 | Command parsing (.DC, .AC, .TRAN, .OP, .PRINT, .IC) |
+| `parser/subcircuit.rs` | 367 | Subcircuit/model parsing (.SUBCKT, .MODEL) |
+| `parser/types.rs` | 163 | Type definitions and imports |
+| `parser/waveforms.rs` | 107 | Waveform parsing (PULSE, SIN, PWL) |
+
+### Transient Refactoring
+
+Refactored `spicier-solver/src/transient.rs` from 1728 lines into 5 focused modules.
+
+**New module structure:**
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `transient/mod.rs` | 548 | Re-exports and tests |
+| `transient/solver.rs` | 609 | Main solver functions (fixed, adaptive, dispatched) |
+| `transient/companion.rs` | 294 | Capacitor/inductor companion models |
+| `transient/result.rs` | 214 | TimePoint, TransientResult, AdaptiveTransientResult |
+| `transient/types.rs` | 118 | Params and configuration types |
+
+**Refactoring Summary:**
+- No files over 1000 lines remain in main source directories
+- All 297 tests continue to pass
+- Code organization improved for maintainability
+
+### Work Plan Update
+
+Added new phases to WORK_PLAN.md:
+
+**Phase 10: Validation Test Suite**
+- Import ngspice regression tests (113 tests with expected outputs)
+- Adapt spice21 golden data (ring oscillators, device characterization)
+- Cross-simulator comparison infrastructure
+- Toleranced result comparison
+
+**Phase 11: crates.io Release Preparation**
+- API stability review
+- Rustdoc documentation
+- License finalization
+- Metadata and quality checks
+- Release strategy
+
+**Phase 12: Extended Features**
+- .PARAM / parameter expressions
+- .MEASURE statements
+- Noise analysis
+- Additional device models (BJT, JFET, BSIM3/BSIM4)
+
+**Resources identified:**
+- ngspice: 113 regression tests, 462 example circuits, test infrastructure scripts
+- spice21: 87 Rust tests, 7 golden data files, ring oscillator validation circuits
