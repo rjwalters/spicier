@@ -1,8 +1,10 @@
 //! Command parsing (.DC, .AC, .TRAN, .IC, .PRINT, .MODEL, .PARAM, .SUBCKT, .ENDS).
 
-use spicier_core::units::parse_value;
+use std::collections::HashSet;
+
 use spicier_devices::bjt::BjtParams;
 use spicier_devices::diode::DiodeParams;
+use spicier_devices::expression::{EvalContext, parse_expression_with_params};
 use spicier_devices::jfet::JfetParams;
 use spicier_devices::mosfet::MosfetParams;
 
@@ -10,8 +12,8 @@ use crate::error::{Error, Result};
 use crate::lexer::Token;
 
 use super::types::{
-    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, OutputVariable, PrintAnalysisType,
-    PrintCommand, SubcircuitDefinition,
+    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, OutputVariable,
+    PrintAnalysisType, PrintCommand, SubcircuitDefinition,
 };
 use super::{ModelDefinition, Parser};
 
@@ -54,6 +56,10 @@ impl<'a> Parser<'a> {
             }
             "PARAM" => {
                 // Already parsed in Pass 1, skip
+                self.skip_to_eol();
+            }
+            "MEAS" | "MEASURE" => {
+                // TODO: Phase 12b - .MEASURE parsing not yet implemented
                 self.skip_to_eol();
             }
             _ => {
@@ -650,8 +656,9 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Parse .PARAM name=value [name=value ...]
-    /// Values must be numeric literals (with optional SI suffix).
+    /// Parse .PARAM name=expression [name=expression ...]
+    /// Expressions can include arithmetic operations and references to other parameters.
+    /// Parameters are resolved immediately during Pass 1, using previously defined parameters.
     pub(super) fn parse_param_command(&mut self, line: usize) -> Result<()> {
         loop {
             match self.peek() {
@@ -669,23 +676,30 @@ impl<'a> Parser<'a> {
                     }
                     self.advance(); // consume '='
 
-                    // Get value - use parse_value directly for numeric literals
-                    let value = match self.peek() {
-                        Token::Value(v) | Token::Name(v) => {
-                            let v = v.clone();
-                            self.advance();
-                            parse_value(&v).ok_or_else(|| Error::ParseError {
-                                line,
-                                message: format!(".PARAM: invalid value '{}' for '{}'", v, pname),
-                            })?
-                        }
-                        _ => {
-                            return Err(Error::ParseError {
-                                line,
-                                message: format!(".PARAM: expected value for '{}'", pname),
-                            });
-                        }
-                    };
+                    // Collect expression tokens until we hit a new parameter assignment or EOL
+                    let expr_str = self.collect_param_expression();
+
+                    if expr_str.is_empty() {
+                        return Err(Error::ParseError {
+                            line,
+                            message: format!(".PARAM: expected value for '{}'", pname),
+                        });
+                    }
+
+                    // Build set of known parameter names for the expression parser
+                    let param_names: HashSet<String> = self.parameters.keys().cloned().collect();
+
+                    // Parse expression with parameter context
+                    let expr = parse_expression_with_params(&expr_str, &param_names)
+                        .map_err(|e| Error::ParseError {
+                            line,
+                            message: format!(".PARAM: invalid expression for '{}': {}", pname, e),
+                        })?;
+
+                    // Evaluate immediately (parameters are compile-time constants)
+                    let ctx = EvalContext::params_only(&self.parameters);
+                    let value = expr.eval(&ctx);
+
                     self.parameters.insert(pname, value);
                 }
                 _ => {
@@ -695,5 +709,85 @@ impl<'a> Parser<'a> {
         }
         self.skip_to_eol();
         Ok(())
+    }
+
+    /// Collect tokens for a parameter expression, returning as a string.
+    ///
+    /// Collects tokens until:
+    /// - EOL/EOF
+    /// - A name followed by '=' (start of next parameter)
+    fn collect_param_expression(&mut self) -> String {
+        let mut tokens = Vec::new();
+        let mut paren_depth = 0;
+
+        loop {
+            match self.peek() {
+                Token::Eol | Token::Eof => break,
+                Token::LParen => {
+                    paren_depth += 1;
+                    tokens.push("(".to_string());
+                    self.advance();
+                }
+                Token::RParen => {
+                    paren_depth -= 1;
+                    tokens.push(")".to_string());
+                    self.advance();
+                }
+                Token::Comma => {
+                    tokens.push(",".to_string());
+                    self.advance();
+                }
+                Token::Star => {
+                    tokens.push("*".to_string());
+                    self.advance();
+                }
+                Token::Slash => {
+                    tokens.push("/".to_string());
+                    self.advance();
+                }
+                Token::Caret => {
+                    tokens.push("^".to_string());
+                    self.advance();
+                }
+                Token::Name(n) if paren_depth == 0 => {
+                    // Check if this looks like a new param assignment (name=...)
+                    let name = n.clone();
+                    // Peek ahead to see if there's an equals sign
+                    if self.is_next_equals() {
+                        // This is a new parameter, stop collecting
+                        break;
+                    }
+                    tokens.push(name);
+                    self.advance();
+                }
+                Token::Name(n) => {
+                    tokens.push(n.clone());
+                    self.advance();
+                }
+                Token::Value(v) => {
+                    tokens.push(v.clone());
+                    self.advance();
+                }
+                Token::Equals if paren_depth == 0 => {
+                    // Unexpected equals outside parens - stop
+                    break;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        tokens.join(" ")
+    }
+
+    /// Check if the next non-whitespace token is '='.
+    fn is_next_equals(&self) -> bool {
+        // Look at position + 1 for the next token
+        if self.pos + 1 < self.tokens.len() {
+            matches!(self.tokens[self.pos + 1].token, Token::Equals)
+        } else {
+            false
+        }
     }
 }
