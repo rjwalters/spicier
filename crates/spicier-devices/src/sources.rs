@@ -170,10 +170,11 @@ mod tests {
         let v = VoltageSource::new("V1", NodeId::new(1), NodeId::GROUND, 5.0, 0);
 
         Stamp::stamp(&v, &mut mna);
+        let matrix = mna.to_dense_matrix();
 
         // Check coupling
-        assert_eq!(mna.matrix()[(0, 2)], 1.0);
-        assert_eq!(mna.matrix()[(2, 0)], 1.0);
+        assert_eq!(matrix[(0, 2)], 1.0);
+        assert_eq!(matrix[(2, 0)], 1.0);
         // Check voltage value
         assert_eq!(mna.rhs()[2], 5.0);
     }

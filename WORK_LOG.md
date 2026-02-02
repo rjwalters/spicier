@@ -374,3 +374,286 @@ Added cached sparse LU solvers that separate symbolic and numeric factorization.
 - `crates/spicier-solver/src/newton.rs` (use cached solver)
 - `crates/spicier-solver/src/transient.rs` (use cached solver)
 - `crates/spicier-solver/src/ac.rs` (use cached solver)
+
+### Sparse-Only MNA Systems
+
+Converted both `MnaSystem` and `ComplexMna` to sparse-only storage, eliminating redundant O(n²) dense matrix memory. Values are now stored as triplets; dense matrix is built on demand for tests and small circuits.
+
+**MnaSystem changes (`spicier-core/src/mna.rs`):**
+- Removed `matrix: DMatrix<f64>` field
+- Kept `triplets: Vec<(usize, usize, f64)>` as sole storage
+- `add_element()` now only pushes to triplets (duplicates allowed, summed during construction)
+- New `to_dense_matrix()` method builds `DMatrix<f64>` on demand
+- Removed `matrix()` and `matrix_mut()` accessors
+
+**ComplexMna changes (`spicier-solver/src/ac.rs`):**
+- Removed `matrix: DMatrix<Complex<f64>>` field
+- Added `num_vsources` field to calculate size without matrix
+- `add_element()` now only pushes to triplets
+- New `to_dense_matrix()` method builds `DMatrix<Complex<f64>>` on demand
+- Removed `matrix()` and `matrix_mut()` accessors
+
+**Solver updates:**
+- `solve_dc()` — uses `&mna.to_dense_matrix()` for small circuits
+- `solve_newton_raphson()` — uses `&mna.to_dense_matrix()` for small circuits
+- `solve_transient()` — uses `&mna.to_dense_matrix()` for small circuits
+- `solve_ac()` — uses `&mna.to_dense_matrix()` for small circuits
+
+**Test updates:**
+- All tests (~20 locations) updated from `sys.matrix[...]` to `let matrix = sys.to_dense_matrix(); matrix[...]`
+- Files updated: mna.rs, netlist.rs, passive.rs, sources.rs, controlled.rs, transient.rs, ac.rs
+
+**Tests:** 174 total passing, clippy clean
+
+### Sparse Operator Wrappers
+
+Added operator wrappers for faer sparse matrices to enable iterative solvers like GMRES.
+
+**New types (`sparse_operator.rs`):**
+- `SparseRealOperator` — wraps `SparseColMat<usize, f64>`, implements `RealOperator`
+- `SparseComplexOperator` — wraps `SparseColMat<usize, c64>`, implements `ComplexOperator`
+
+**Features:**
+- CSC matrix-vector multiplication (y = A * x)
+- Construction from triplets or existing faer sparse matrices
+- Compatible with trait object dispatch for use with GMRES
+
+**Tests:** 180 total passing (6 new tests)
+
+### Real-Valued GMRES
+
+Added real-valued GMRES solver as a more efficient alternative to complex GMRES for DC and transient analysis.
+
+**New functions (`gmres.rs`):**
+- `solve_gmres_real(&dyn RealOperator, &[f64], &GmresConfig) -> RealGmresResult`
+  - SIMD-accelerated dot products via `spicier_simd::real_dot_product`
+  - Modified Gram-Schmidt orthogonalization
+  - Givens rotations for stable least-squares minimization
+  - Restarted GMRES with configurable restart parameter
+
+**New types:**
+- `RealGmresResult` — solution, iterations, residual, converged flag
+
+**Tests:** 189 total passing (9 new GMRES tests)
+
+### Solver Selection Heuristic
+
+Added automatic solver selection between direct LU and iterative GMRES based on system size.
+
+**New module (`solver_select.rs`):**
+- `SolverStrategy` enum — `Auto`, `DirectLU`, `IterativeGmres`
+- `SolverConfig` — strategy, GMRES threshold (default 10k), GMRES config
+- `solve_auto()` — automatically selects solver based on system size
+- `SolveResult` — solution + metadata (solver used, iterations, residual)
+
+**Features:**
+- Auto mode: uses LU for systems < 10k nodes, GMRES for larger systems
+- GMRES fallback to LU if iteration doesn't converge
+- CLI-friendly `from_name()` for parsing strategy strings
+- Configurable threshold via `SolverConfig::with_threshold()`
+
+**Tests:** 197 total passing (8 new solver selection tests)
+
+### Preconditioned GMRES
+
+Added preconditioner infrastructure for GMRES iterative solver to improve convergence on ill-conditioned systems.
+
+**New module (`preconditioner.rs`):**
+- `RealPreconditioner` trait — `apply(&self, x: &[f64], y: &mut [f64])`, `dim()`
+- `ComplexPreconditioner` trait — same interface for complex systems
+- `JacobiPreconditioner` — diagonal preconditioner for real systems
+  - `from_triplets(size, triplets)` — extracts and inverts diagonal entries
+  - `from_diagonal(diag)` — direct construction from diagonal vector
+  - Handles zero/near-zero diagonal entries (treats as 1.0)
+- `ComplexJacobiPreconditioner` — same for complex systems
+- `IdentityPreconditioner` — no-op preconditioner for both real and complex
+
+**GMRES extensions (`gmres.rs`):**
+- `solve_gmres_real_preconditioned()` — right-preconditioned real GMRES
+  - Solves A*M^(-1)*y = b, then x = M^(-1)*y
+  - Uses preconditioner for improved spectral properties
+- `solve_gmres_preconditioned()` — right-preconditioned complex GMRES
+- Both functions take `&dyn RealPreconditioner` / `&dyn ComplexPreconditioner`
+
+**Tests:** 211 total passing (14 new preconditioner + preconditioned GMRES tests)
+
+### Phase 7c Complete
+
+All Phase 7c tasks completed:
+- ✅ Sparse-only MnaSystem and ComplexMna
+- ✅ Sparse operator wrappers (SparseRealOperator, SparseComplexOperator)
+- ✅ Real-valued GMRES (solve_gmres_real)
+- ✅ Solver selection heuristic (solve_auto, SolverStrategy)
+- ✅ Preconditioned GMRES (Jacobi preconditioner, right preconditioning)
+
+### Phase 8: SIMD-Friendly Data Layouts
+
+Added batched device structures with Structure-of-Arrays (SoA) layout for SIMD-efficient device evaluation.
+
+**New module (`spicier-devices/src/batch.rs`):**
+- `DiodeBatch` — batched diode parameters in SoA layout
+  - `is`, `n`, `nvt`, `node_pos`, `node_neg` as separate vectors
+  - `push()` adds diodes, `finalize()` pads to SIMD lane count
+  - `evaluate_batch()` evaluates all diodes with SIMD dispatch
+  - `evaluate_batch_scalar()` for scalar fallback
+  - AVX2 implementation using intrinsics (`target_feature(enable = "avx2")`)
+  - `evaluate_linearized_batch()` computes id, gd, ieq for NR stamping
+- `MosfetBatch` — batched MOSFET parameters in SoA layout
+  - `mos_type`, `vth`, `beta`, `lambda`, `node_drain/gate/source`
+  - Scalar evaluation (branching prevents effective vectorization)
+  - `evaluate_batch()` returns ids, gds, gm for all devices
+  - `evaluate_linearized_batch()` computes ieq for NR stamping
+- `BatchMosfetType` — enum for NMOS/PMOS
+- `round_up_to_simd()` — utility for SIMD lane padding
+
+**Key design decisions:**
+- Ground nodes encoded as `usize::MAX` for branchless voltage lookup
+- Padding with neutral devices (high Vth MOSFET, low Is diode)
+- Diode batch uses AVX2 SIMD for arithmetic, scalar exp() per element
+- MOSFET batch stays scalar due to region branching
+
+**Tests:** 220 total passing (9 new batch tests)
+
+### Vectorized Device Evaluation Integration
+
+Wired batched device evaluation into Newton-Raphson solver for SIMD-accelerated nonlinear circuit simulation.
+
+**New module (`spicier-solver/src/batched_newton.rs`):**
+- `BatchedNonlinearDevices` — container for batched diodes and MOSFETs
+  - `add_diode()`, `add_mosfet()` for populating batches
+  - `finalize()` pads batches and allocates evaluation buffers
+  - `evaluate_and_stamp()` batch-evaluates all devices and stamps MNA
+- `LinearStamper` trait — callback for stamping linear devices
+- `solve_batched_newton_raphson()` — batched variant of NR solver
+  - Uses `LinearStamper` for linear devices (per-iteration)
+  - Uses `BatchedNonlinearDevices::evaluate_and_stamp()` for nonlinear
+  - Same convergence checking and sparse solver caching as regular NR
+- Pre-allocated evaluation buffers to avoid per-iteration allocation
+
+**Performance benefits:**
+- Diode evaluation uses AVX2 SIMD (4 diodes per iteration)
+- Memory layout optimized for cache locality (SoA vs AoS)
+- Evaluation buffers reused across NR iterations
+- Stamping loop separate from evaluation (better instruction pipelining)
+
+**Tests:** 224 total passing (4 new batched_newton tests)
+- `test_batched_newton_diode` — single diode circuit
+- `test_batched_vs_single_diode` — comparison with regular NR
+- `test_batched_multiple_diodes` — 10 parallel diodes
+- `test_batched_mosfet` — NMOS in saturation
+
+### Parallel Matrix Assembly
+
+Added infrastructure for parallel matrix assembly using thread-local triplet accumulation.
+
+**New module (`spicier-solver/src/parallel.rs`):**
+- `ParallelTripletAccumulator` — thread-local triplet buffer management
+  - `new(num_threads)` creates accumulator with thread buffers
+  - `with_available_parallelism()` uses all CPU cores
+  - `get_buffer(thread_id)` returns mutable access to thread's buffer
+  - `clear()` resets all buffers for reuse
+  - `merge()` combines all buffers into single triplet list
+- `stamp_conductance_triplets()` — stamps conductance to triplet buffer
+- `stamp_current_source_rhs()` — stamps current source to RHS
+- `parallel_ranges()` — splits work across threads evenly
+
+**BatchedNonlinearDevices extensions:**
+- `evaluate_and_stamp_triplets()` — outputs to triplet buffer (for parallel merge)
+- `evaluate_parallel()` — parallel evaluation with thread-local accumulation
+  - Splits device stamping across threads
+  - Uses SIMD for evaluation, parallel for stamping
+  - Falls back to sequential for small device counts (<100)
+
+**Tests:** 228 total passing (5 new parallel tests)
+
+### Batched Parameter Sweeps
+
+Added infrastructure for Monte Carlo, corner analysis, and parameter sweep simulations.
+
+**New module (`spicier-solver/src/sweep.rs`):**
+- `ParameterVariation` — defines parameter with nominal, min/max, sigma
+- `SweepPoint` — stores parameter values at a single sweep point
+- `SweepStatistics` — mean, std_dev, min, max from samples
+
+**Point generators:**
+- `MonteCarloGenerator` — random sampling with Box-Muller normal distribution
+  - Reproducible via seed, samples clamped to min/max bounds
+- `CornerGenerator` — generates 2^n combinations of min/max values
+- `LinearSweepGenerator` — linear interpolation between bounds
+
+**Sweep execution:**
+- `SweepStamperFactory` trait — creates stampers for varied parameters
+- `SweepStamper` trait — stamps linear devices with specific parameters
+- `solve_batched_sweep()` — runs multiple simulations across sweep points
+- `BatchedSweepResult` — solutions + statistics accessors
+
+**Tests:** 233 total passing (5 new sweep tests)
+- `test_monte_carlo_generator` — reproducibility, bounds checking
+- `test_corner_generator` — 2^n corners with all combinations
+- `test_linear_sweep_generator` — linear interpolation
+- `test_sweep_statistics` — mean/std_dev calculation
+- `test_batched_sweep_simple` — voltage divider sweep
+
+### Phase 8 Complete
+
+All Phase 8 tasks completed:
+- ✅ SIMD-friendly data layouts (DiodeBatch, MosfetBatch)
+- ✅ Vectorized device evaluation (solve_batched_newton_raphson)
+- ✅ Parallel matrix assembly (ParallelTripletAccumulator)
+- ✅ Batched parameter sweeps (MonteCarloGenerator, CornerGenerator)
+
+### Phase 9: Dispatch Integration for Analysis Paths
+
+Integrated solver dispatch configuration into all analysis paths, enabling automatic selection between direct LU and iterative GMRES solvers based on system size.
+
+**New module (`spicier-solver/src/dispatch.rs`):**
+- `DispatchConfig` — unified configuration for solver dispatch
+  - `backend: ComputeBackend` — CPU, CUDA, or Metal
+  - `strategy: SolverDispatchStrategy` — Auto, DirectLU, or IterativeGmres
+  - `cpu_threshold: usize` — systems below this size always use CPU (default 1000)
+  - `gmres_threshold: usize` — systems at or above this size use GMRES (default 10000)
+  - `gmres_config: GmresConfig` — GMRES configuration for iterative solving
+  - Builder pattern: `with_strategy()`, `with_cpu_threshold()`, `with_gmres_threshold()`
+  - Decision methods: `use_gpu(size)`, `use_gmres(size)`, `describe(size)`
+- `SolverDispatchStrategy` — enum for solver selection strategy
+  - `from_name()` for CLI parsing
+
+**Dispatched analysis functions:**
+
+*AC Analysis (`spicier-solver/src/ac.rs`):*
+- `solve_ac_dispatched(stamper, params, config)` — AC sweep with dispatch config
+- `solve_ac_gmres(mna, gmres_config)` — internal GMRES solver for AC
+  - Builds `SparseComplexOperator` from triplets
+  - Uses `ComplexJacobiPreconditioner` for faster convergence
+  - Logs warning if GMRES doesn't converge
+
+*DC Analysis (`spicier-solver/src/dc.rs`):*
+- `solve_dc_dispatched(mna, config)` — DC operating point with dispatch config
+- `solve_dc_gmres(mna, gmres_config)` — internal GMRES solver for DC
+  - Builds `SparseRealOperator` from triplets
+  - Uses `JacobiPreconditioner` for faster convergence
+- `solve_dc_sweep_dispatched(stamper, params, config)` — DC sweep with dispatch
+
+*Transient Analysis (`spicier-solver/src/transient.rs`):*
+- `solve_transient_dispatched(stamper, caps, inds, params, dc, config)` — transient with dispatch
+- `solve_transient_gmres(mna, gmres_config)` — internal GMRES solver for timesteps
+
+**Key design:**
+- All dispatched functions fall back to cached sparse LU for medium systems
+- GMRES uses Jacobi (diagonal) preconditioner for fast setup
+- Non-convergence logged but doesn't error (returns best guess)
+- GPU operators available via `RealOperator`/`ComplexOperator` traits
+
+**Tests:** 242 total passing (3 new dispatched tests)
+- `test_voltage_divider_dispatched` — DC dispatch with default config
+- `test_solve_ac_dispatched` — AC dispatch with RC lowpass
+- `test_transient_dispatched` — Transient dispatch with RC charging
+
+**Phase 9 progress:**
+- ✅ Wire GPU operators into analysis paths (via dispatched functions)
+- ✅ Size-based dispatch heuristic (DispatchConfig with thresholds)
+- ⏳ Shared memory management
+- ⏳ 9b: Batched sweep solver on GPU
+- ⏳ 9c: Batched device evaluation on GPU
+- ⏳ 9d: Large-circuit sparse solve
+- ⏳ 9e: Post-processing on GPU

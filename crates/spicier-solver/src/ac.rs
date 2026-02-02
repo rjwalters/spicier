@@ -5,8 +5,13 @@ use std::f64::consts::PI;
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex;
 
+use crate::dispatch::DispatchConfig;
 use crate::error::Result;
+use crate::gmres::GmresConfig;
 use crate::linear::{CachedSparseLuComplex, SPARSE_THRESHOLD, solve_complex};
+use crate::operator::ComplexOperator;
+use crate::preconditioner::{ComplexJacobiPreconditioner, ComplexPreconditioner};
+use crate::sparse_operator::SparseComplexOperator;
 
 /// AC sweep type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,11 +41,15 @@ pub struct AcParams {
 ///
 /// The matrix equation is A*x = b where A, x, b are all complex-valued.
 /// Rows/columns 0..num_nodes are node voltages; num_nodes..size are branch currents.
+///
+/// Uses sparse triplet storage - duplicate entries are summed when constructing
+/// the sparse matrix. Dense matrix can be built on demand for small circuits.
 pub struct ComplexMna {
-    matrix: DMatrix<Complex<f64>>,
     rhs: DVector<Complex<f64>>,
     num_nodes: usize,
+    num_vsources: usize,
     /// Triplet accumulator for sparse matrix construction: (row, col, value).
+    /// Duplicates are allowed and will be summed during matrix construction.
     pub triplets: Vec<(usize, usize, Complex<f64>)>,
 }
 
@@ -49,9 +58,9 @@ impl ComplexMna {
     pub fn new(num_nodes: usize, num_vsources: usize) -> Self {
         let size = num_nodes + num_vsources;
         Self {
-            matrix: DMatrix::from_element(size, size, Complex::new(0.0, 0.0)),
             rhs: DVector::from_element(size, Complex::new(0.0, 0.0)),
             num_nodes,
+            num_vsources,
             triplets: Vec::new(),
         }
     }
@@ -59,16 +68,6 @@ impl ComplexMna {
     /// Get the number of nodes (excluding ground).
     pub fn num_nodes(&self) -> usize {
         self.num_nodes
-    }
-
-    /// Get a reference to the matrix.
-    pub fn matrix(&self) -> &DMatrix<Complex<f64>> {
-        &self.matrix
-    }
-
-    /// Get a mutable reference to the matrix.
-    pub fn matrix_mut(&mut self) -> &mut DMatrix<Complex<f64>> {
-        &mut self.matrix
     }
 
     /// Get a reference to the RHS vector.
@@ -83,12 +82,27 @@ impl ComplexMna {
 
     /// Get the total system size.
     pub fn size(&self) -> usize {
-        self.matrix.nrows()
+        self.num_nodes + self.num_vsources
     }
 
-    /// Add a value to the coefficient matrix at (row, col) and record the triplet.
+    /// Build a dense matrix from the triplets.
+    ///
+    /// Use this for small circuits or testing. For large circuits, use the
+    /// triplets directly with a sparse solver.
+    pub fn to_dense_matrix(&self) -> DMatrix<Complex<f64>> {
+        let size = self.size();
+        let mut matrix = DMatrix::from_element(size, size, Complex::new(0.0, 0.0));
+        for &(row, col, value) in &self.triplets {
+            matrix[(row, col)] += value;
+        }
+        matrix
+    }
+
+    /// Add a value to the coefficient matrix at (row, col).
+    ///
+    /// Values are stored as triplets. Duplicate entries at the same position
+    /// are summed when the matrix is constructed.
     pub fn add_element(&mut self, row: usize, col: usize, value: Complex<f64>) {
-        self.matrix[(row, col)] += value;
         self.triplets.push((row, col, value));
     }
 
@@ -373,7 +387,7 @@ pub fn solve_ac(stamper: &dyn AcStamper, params: &AcParams) -> Result<AcResult> 
             };
             solver.solve(&mna.triplets, mna.rhs())?
         } else {
-            solve_complex(mna.matrix(), mna.rhs())?
+            solve_complex(&mna.to_dense_matrix(), mna.rhs())?
         };
 
         result.points.push(AcPoint {
@@ -385,9 +399,156 @@ pub fn solve_ac(stamper: &dyn AcStamper, params: &AcParams) -> Result<AcResult> 
     Ok(result)
 }
 
+/// Run AC analysis with configurable dispatch.
+///
+/// This variant allows specifying the compute backend and solver strategy.
+/// For large systems, can use GMRES with GPU operators instead of direct LU.
+///
+/// # Arguments
+/// * `stamper` - Circuit stamper
+/// * `params` - AC sweep parameters
+/// * `config` - Dispatch configuration (backend, strategy, thresholds)
+pub fn solve_ac_dispatched(
+    stamper: &dyn AcStamper,
+    params: &AcParams,
+    config: &DispatchConfig,
+) -> Result<AcResult> {
+    let num_nodes = stamper.num_nodes();
+    let num_vsources = stamper.num_vsources();
+    let frequencies = generate_frequencies(params);
+    let mna_size = num_nodes + num_vsources;
+
+    let mut result = AcResult {
+        points: Vec::with_capacity(frequencies.len()),
+        num_nodes,
+    };
+
+    // Decide solver strategy based on size
+    let use_gmres = config.use_gmres(mna_size);
+
+    // Cached sparse solver for direct LU
+    let mut cached_solver: Option<CachedSparseLuComplex> = None;
+
+    for &freq in &frequencies {
+        let omega = 2.0 * PI * freq;
+        let mut mna = ComplexMna::new(num_nodes, num_vsources);
+
+        stamper.stamp_ac(&mut mna, omega);
+
+        let solution = if use_gmres {
+            // Use iterative GMRES with preconditioner
+            solve_ac_gmres(&mna, &config.gmres_config)?
+        } else if mna_size >= SPARSE_THRESHOLD {
+            // Use cached sparse direct solver
+            let solver = match &cached_solver {
+                Some(s) => s,
+                None => {
+                    cached_solver = Some(CachedSparseLuComplex::new(mna_size, &mna.triplets)?);
+                    cached_solver.as_ref().unwrap()
+                }
+            };
+            solver.solve(&mna.triplets, mna.rhs())?
+        } else {
+            // Use dense direct solver
+            solve_complex(&mna.to_dense_matrix(), mna.rhs())?
+        };
+
+        result.points.push(AcPoint {
+            frequency: freq,
+            solution,
+        });
+    }
+
+    Ok(result)
+}
+
+/// Solve a single AC system using GMRES.
+fn solve_ac_gmres(mna: &ComplexMna, config: &GmresConfig) -> Result<DVector<Complex<f64>>> {
+    use num_complex::Complex64 as C64;
+
+    // Build sparse operator from triplets
+    let size = mna.size();
+    let triplets_c64: Vec<_> = mna
+        .triplets
+        .iter()
+        .map(|&(r, c, v)| (r, c, C64::new(v.re, v.im)))
+        .collect();
+
+    let operator = SparseComplexOperator::from_triplets(size, &triplets_c64)
+        .ok_or_else(|| crate::error::Error::SolverError("Failed to build sparse operator".into()))?;
+
+    // Build Jacobi preconditioner
+    let preconditioner = ComplexJacobiPreconditioner::from_triplets(size, &triplets_c64);
+
+    // Convert RHS to C64
+    let rhs_c64: Vec<C64> = mna.rhs().iter().map(|&v| C64::new(v.re, v.im)).collect();
+
+    // Solve with preconditioned GMRES
+    let gmres_result = crate::gmres::solve_gmres_preconditioned(
+        &operator as &dyn ComplexOperator,
+        &preconditioner as &dyn ComplexPreconditioner,
+        &rhs_c64,
+        config,
+    );
+
+    if !gmres_result.converged {
+        log::warn!(
+            "AC GMRES did not converge after {} iterations (residual: {:.2e})",
+            gmres_result.iterations,
+            gmres_result.residual
+        );
+    }
+
+    // Convert back to Complex<f64>
+    let solution: Vec<Complex<f64>> = gmres_result
+        .x
+        .iter()
+        .map(|&v| Complex::new(v.re, v.im))
+        .collect();
+
+    Ok(DVector::from_vec(solution))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::DispatchConfig;
+
+    #[test]
+    fn test_solve_ac_dispatched() {
+        // Simple RC lowpass with dispatched solver
+        // R=1k, C=1uF → f_3dB = 159 Hz
+        struct SimpleRcStamper;
+        impl AcStamper for SimpleRcStamper {
+            fn stamp_ac(&self, mna: &mut ComplexMna, omega: f64) {
+                mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+                mna.stamp_conductance(Some(0), Some(1), 1.0 / 1000.0);
+                let yc = Complex::new(0.0, omega * 1e-6);
+                mna.stamp_admittance(Some(1), None, yc);
+            }
+            fn num_nodes(&self) -> usize { 2 }
+            fn num_vsources(&self) -> usize { 1 }
+        }
+
+        let params = AcParams {
+            fstart: 1.0,  // Well below f_3dB
+            fstop: 1000.0,
+            num_points: 5,
+            sweep_type: AcSweepType::Linear,
+        };
+
+        let config = DispatchConfig::default();
+        let result = solve_ac_dispatched(&SimpleRcStamper, &params, &config).unwrap();
+
+        assert_eq!(result.points.len(), 5);
+        // At 1 Hz (well below f_3dB=159Hz), output should be close to input (0 dB)
+        let mag_db = result.magnitude_db(1);
+        assert!(
+            mag_db[0].1.abs() < 0.1,
+            "At f={} Hz, magnitude = {:.2} dB (expected ~0 dB)",
+            mag_db[0].0, mag_db[0].1
+        );
+    }
 
     #[test]
     fn test_generate_linear_frequencies() {
@@ -716,11 +877,12 @@ mod tests {
         // Stamp admittance Y between nodes 0 and 1
         let y = Complex::new(1.0, 2.0);
         mna.stamp_admittance(Some(0), Some(1), y);
+        let matrix = mna.to_dense_matrix();
 
-        assert_eq!(mna.matrix()[(0, 0)], y);
-        assert_eq!(mna.matrix()[(1, 1)], y);
-        assert_eq!(mna.matrix()[(0, 1)], -y);
-        assert_eq!(mna.matrix()[(1, 0)], -y);
+        assert_eq!(matrix[(0, 0)], y);
+        assert_eq!(matrix[(1, 1)], y);
+        assert_eq!(matrix[(0, 1)], -y);
+        assert_eq!(matrix[(1, 0)], -y);
     }
 
     #[test]
@@ -729,15 +891,16 @@ mod tests {
 
         let v = Complex::new(1.0, 0.5);
         mna.stamp_voltage_source(Some(0), Some(1), 0, v);
+        let matrix = mna.to_dense_matrix();
 
         let one = Complex::new(1.0, 0.0);
 
         // Check KCL stamps
-        assert_eq!(mna.matrix()[(0, 2)], one);
-        assert_eq!(mna.matrix()[(1, 2)], -one);
+        assert_eq!(matrix[(0, 2)], one);
+        assert_eq!(matrix[(1, 2)], -one);
         // Check branch equation stamps
-        assert_eq!(mna.matrix()[(2, 0)], one);
-        assert_eq!(mna.matrix()[(2, 1)], -one);
+        assert_eq!(matrix[(2, 0)], one);
+        assert_eq!(matrix[(2, 1)], -one);
         // Check RHS
         assert_eq!(mna.rhs()[2], v);
     }

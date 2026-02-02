@@ -6,10 +6,11 @@ use nalgebra::{DMatrix, DVector};
 /// Where A is the conductance/coefficient matrix,
 /// x is the solution vector (node voltages + branch currents),
 /// and b is the RHS vector (current sources + voltage sources).
+///
+/// Uses sparse triplet storage - duplicate entries are summed when constructing
+/// the sparse matrix. Dense matrix can be built on demand for small circuits.
 #[derive(Debug, Clone)]
 pub struct MnaSystem {
-    /// The coefficient matrix (G matrix extended with B, C, D blocks).
-    pub matrix: DMatrix<f64>,
     /// The right-hand side vector.
     pub rhs: DVector<f64>,
     /// Number of nodes (excluding ground).
@@ -17,6 +18,7 @@ pub struct MnaSystem {
     /// Number of voltage sources (and other current variables).
     pub num_vsources: usize,
     /// Triplet accumulator for sparse matrix construction: (row, col, value).
+    /// Duplicates are allowed and will be summed during matrix construction.
     pub triplets: Vec<(usize, usize, f64)>,
 }
 
@@ -29,7 +31,6 @@ impl MnaSystem {
     pub fn new(num_nodes: usize, num_vsources: usize) -> Self {
         let size = num_nodes + num_vsources;
         Self {
-            matrix: DMatrix::zeros(size, size),
             rhs: DVector::zeros(size),
             num_nodes,
             num_vsources,
@@ -42,17 +43,31 @@ impl MnaSystem {
         self.num_nodes + self.num_vsources
     }
 
-    /// Clear the matrix and RHS to zeros.
+    /// Clear the triplets and RHS to prepare for re-stamping.
     pub fn clear(&mut self) {
-        self.matrix.fill(0.0);
         self.rhs.fill(0.0);
         self.triplets.clear();
     }
 
-    /// Add a value to the coefficient matrix at (row, col) and record the triplet.
+    /// Add a value to the coefficient matrix at (row, col).
+    ///
+    /// Values are stored as triplets. Duplicate entries at the same position
+    /// are summed when the matrix is constructed.
     pub fn add_element(&mut self, row: usize, col: usize, value: f64) {
-        self.matrix[(row, col)] += value;
         self.triplets.push((row, col, value));
+    }
+
+    /// Build a dense matrix from the triplets.
+    ///
+    /// Use this for small circuits or testing. For large circuits, use the
+    /// triplets directly with a sparse solver.
+    pub fn to_dense_matrix(&self) -> DMatrix<f64> {
+        let size = self.size();
+        let mut matrix = DMatrix::zeros(size, size);
+        for &(row, col, value) in &self.triplets {
+            matrix[(row, col)] += value;
+        }
+        matrix
     }
 
     /// Add a value to the RHS vector at the given row.
@@ -129,16 +144,6 @@ impl MnaSystem {
         self.rhs[row] = voltage;
     }
 
-    /// Get a reference to the coefficient matrix.
-    pub fn matrix(&self) -> &DMatrix<f64> {
-        &self.matrix
-    }
-
-    /// Get a mutable reference to the coefficient matrix.
-    pub fn matrix_mut(&mut self) -> &mut DMatrix<f64> {
-        &mut self.matrix
-    }
-
     /// Get a reference to the RHS vector.
     pub fn rhs(&self) -> &DVector<f64> {
         &self.rhs
@@ -168,11 +173,12 @@ mod tests {
 
         // 1 ohm resistor between nodes 0 and 1
         sys.stamp_conductance(Some(0), Some(1), 1.0);
+        let matrix = sys.to_dense_matrix();
 
-        assert_eq!(sys.matrix[(0, 0)], 1.0);
-        assert_eq!(sys.matrix[(1, 1)], 1.0);
-        assert_eq!(sys.matrix[(0, 1)], -1.0);
-        assert_eq!(sys.matrix[(1, 0)], -1.0);
+        assert_eq!(matrix[(0, 0)], 1.0);
+        assert_eq!(matrix[(1, 1)], 1.0);
+        assert_eq!(matrix[(0, 1)], -1.0);
+        assert_eq!(matrix[(1, 0)], -1.0);
     }
 
     #[test]
@@ -181,9 +187,10 @@ mod tests {
 
         // 1 ohm resistor between node 0 and ground
         sys.stamp_conductance(Some(0), None, 1.0);
+        let matrix = sys.to_dense_matrix();
 
-        assert_eq!(sys.matrix[(0, 0)], 1.0);
-        assert_eq!(sys.matrix[(1, 1)], 0.0);
+        assert_eq!(matrix[(0, 0)], 1.0);
+        assert_eq!(matrix[(1, 1)], 0.0);
     }
 
     #[test]
@@ -203,11 +210,12 @@ mod tests {
 
         // 5V source between node 0 (+) and ground (-)
         sys.stamp_voltage_source(Some(0), None, 0, 5.0);
+        let matrix = sys.to_dense_matrix();
 
         // Check B matrix (node 0 row, vsource column)
-        assert_eq!(sys.matrix[(0, 2)], 1.0);
+        assert_eq!(matrix[(0, 2)], 1.0);
         // Check C matrix (vsource row, node 0 column)
-        assert_eq!(sys.matrix[(2, 0)], 1.0);
+        assert_eq!(matrix[(2, 0)], 1.0);
         // Check RHS
         assert_eq!(sys.rhs[2], 5.0);
     }

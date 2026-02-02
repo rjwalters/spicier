@@ -261,12 +261,13 @@ mod tests {
         let r = Resistor::new("R1", NodeId::new(1), NodeId::new(2), 1000.0);
 
         Stamp::stamp(&r, &mut mna);
+        let matrix = mna.to_dense_matrix();
 
         let g = 0.001; // 1/1000
-        assert!((mna.matrix()[(0, 0)] - g).abs() < 1e-10);
-        assert!((mna.matrix()[(1, 1)] - g).abs() < 1e-10);
-        assert!((mna.matrix()[(0, 1)] + g).abs() < 1e-10);
-        assert!((mna.matrix()[(1, 0)] + g).abs() < 1e-10);
+        assert!((matrix[(0, 0)] - g).abs() < 1e-10);
+        assert!((matrix[(1, 1)] - g).abs() < 1e-10);
+        assert!((matrix[(0, 1)] + g).abs() < 1e-10);
+        assert!((matrix[(1, 0)] + g).abs() < 1e-10);
     }
 
     #[test]
@@ -275,9 +276,10 @@ mod tests {
         let r = Resistor::new("R1", NodeId::new(1), NodeId::GROUND, 100.0);
 
         Stamp::stamp(&r, &mut mna);
+        let matrix = mna.to_dense_matrix();
 
         let g = 0.01;
-        assert!((mna.matrix()[(0, 0)] - g).abs() < 1e-10);
+        assert!((matrix[(0, 0)] - g).abs() < 1e-10);
     }
 
     #[test]
@@ -286,12 +288,13 @@ mod tests {
         let l = Inductor::new("L1", NodeId::new(1), NodeId::new(2), 1e-3, 0);
 
         Stamp::stamp(&l, &mut mna);
+        let matrix = mna.to_dense_matrix();
 
         // Should stamp as 0V voltage source
-        assert_eq!(mna.matrix()[(0, 2)], 1.0);
-        assert_eq!(mna.matrix()[(2, 0)], 1.0);
-        assert_eq!(mna.matrix()[(1, 2)], -1.0);
-        assert_eq!(mna.matrix()[(2, 1)], -1.0);
+        assert_eq!(matrix[(0, 2)], 1.0);
+        assert_eq!(matrix[(2, 0)], 1.0);
+        assert_eq!(matrix[(1, 2)], -1.0);
+        assert_eq!(matrix[(2, 1)], -1.0);
         assert_eq!(mna.rhs()[2], 0.0);
     }
 }

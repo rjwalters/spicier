@@ -318,6 +318,7 @@ mod tests {
 
         let mna = netlist.assemble_mna();
         assert_eq!(mna.size(), 1);
-        assert!((mna.matrix()[(0, 0)] - 0.001).abs() < 1e-10);
+        let matrix = mna.to_dense_matrix();
+        assert!((matrix[(0, 0)] - 0.001).abs() < 1e-10);
     }
 }

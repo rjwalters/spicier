@@ -105,7 +105,7 @@ pub fn solve_newton_raphson(
             };
             solver.solve(&mna.triplets, mna.rhs())?
         } else {
-            solve_dense(mna.matrix(), mna.rhs())?
+            solve_dense(&mna.to_dense_matrix(), mna.rhs())?
         };
 
         // Check convergence

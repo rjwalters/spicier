@@ -426,12 +426,13 @@ mod tests {
         let mut mna = MnaSystem::new(2, 1);
         let e = Vcvs::new("E1", NodeId::new(1), NodeId::GROUND, NodeId::new(2), NodeId::GROUND, 2.0, 0);
         Stamp::stamp(&e, &mut mna);
+        let matrix = mna.to_dense_matrix();
 
         // Branch current coupling: matrix[0, 2] = +1 (out_pos)
-        assert_eq!(mna.matrix()[(0, 2)], 1.0);
+        assert_eq!(matrix[(0, 2)], 1.0);
         // Branch equation: matrix[2, 0] = +1 (out_pos), matrix[2, 1] = -2 (ctrl_pos * -gain)
-        assert_eq!(mna.matrix()[(2, 0)], 1.0);
-        assert_eq!(mna.matrix()[(2, 1)], -2.0);
+        assert_eq!(matrix[(2, 0)], 1.0);
+        assert_eq!(matrix[(2, 1)], -2.0);
     }
 
     #[test]
@@ -441,9 +442,10 @@ mod tests {
         let mut mna = MnaSystem::new(2, 0);
         let g = Vccs::new("G1", NodeId::new(1), NodeId::GROUND, NodeId::new(2), NodeId::GROUND, 0.001);
         Stamp::stamp(&g, &mut mna);
+        let matrix = mna.to_dense_matrix();
 
         // matrix[0, 1] -= gm (current enters out_pos → negative on LHS)
-        assert!((mna.matrix()[(0, 1)] - (-0.001)).abs() < 1e-15);
+        assert!((matrix[(0, 1)] - (-0.001)).abs() < 1e-15);
     }
 
     #[test]
@@ -453,9 +455,10 @@ mod tests {
         let mut mna = MnaSystem::new(2, 1);
         let f = Cccs::new("F1", NodeId::new(2), NodeId::GROUND, 0, 3.0);
         Stamp::stamp(&f, &mut mna);
+        let matrix = mna.to_dense_matrix();
 
         // matrix[1, 2] += gain (out_pos row, vsource branch col)
-        assert_eq!(mna.matrix()[(1, 2)], 3.0);
+        assert_eq!(matrix[(1, 2)], 3.0);
     }
 
     #[test]
@@ -464,11 +467,12 @@ mod tests {
         let mut mna = MnaSystem::new(2, 2);
         let h = Ccvs::new("H1", NodeId::new(2), NodeId::GROUND, 0, 100.0, 1);
         Stamp::stamp(&h, &mut mna);
+        let matrix = mna.to_dense_matrix();
 
         // Branch current coupling: matrix[1, 3] = +1 (out_pos, own branch)
-        assert_eq!(mna.matrix()[(1, 3)], 1.0);
+        assert_eq!(matrix[(1, 3)], 1.0);
         // Branch equation: matrix[3, 1] = +1, matrix[3, 2] = -100 (ctrl branch)
-        assert_eq!(mna.matrix()[(3, 1)], 1.0);
-        assert_eq!(mna.matrix()[(3, 2)], -100.0);
+        assert_eq!(matrix[(3, 1)], 1.0);
+        assert_eq!(matrix[(3, 2)], -100.0);
     }
 }

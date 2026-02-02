@@ -4,8 +4,13 @@ use nalgebra::DVector;
 use spicier_core::NodeId;
 use spicier_core::mna::MnaSystem;
 
+use crate::dispatch::DispatchConfig;
 use crate::error::Result;
+use crate::gmres::GmresConfig;
 use crate::linear::{SPARSE_THRESHOLD, solve_dense, solve_sparse};
+use crate::operator::RealOperator;
+use crate::preconditioner::{JacobiPreconditioner, RealPreconditioner};
+use crate::sparse_operator::SparseRealOperator;
 
 /// DC sweep parameters.
 #[derive(Debug, Clone)]
@@ -150,7 +155,7 @@ pub fn solve_dc(mna: &MnaSystem) -> Result<DcSolution> {
     let solution = if mna.size() >= SPARSE_THRESHOLD {
         solve_sparse(mna.size(), &mna.triplets, mna.rhs())?
     } else {
-        solve_dense(mna.matrix(), mna.rhs())?
+        solve_dense(&mna.to_dense_matrix(), mna.rhs())?
     };
 
     let num_nodes = mna.num_nodes;
@@ -169,9 +174,129 @@ pub fn solve_dc(mna: &MnaSystem) -> Result<DcSolution> {
     })
 }
 
+/// Solve the DC operating point with configurable dispatch.
+///
+/// This variant allows specifying the compute backend and solver strategy.
+/// For large systems, can use GMRES instead of direct LU.
+///
+/// # Arguments
+/// * `mna` - Pre-assembled MNA system
+/// * `config` - Dispatch configuration (backend, strategy, thresholds)
+pub fn solve_dc_dispatched(mna: &MnaSystem, config: &DispatchConfig) -> Result<DcSolution> {
+    let use_gmres = config.use_gmres(mna.size());
+
+    let solution = if use_gmres {
+        solve_dc_gmres(mna, &config.gmres_config)?
+    } else if mna.size() >= SPARSE_THRESHOLD {
+        solve_sparse(mna.size(), &mna.triplets, mna.rhs())?
+    } else {
+        solve_dense(&mna.to_dense_matrix(), mna.rhs())?
+    };
+
+    let num_nodes = mna.num_nodes;
+    let num_vsources = mna.num_vsources;
+
+    let node_voltages = DVector::from_iterator(num_nodes, solution.iter().take(num_nodes).copied());
+    let branch_currents =
+        DVector::from_iterator(num_vsources, solution.iter().skip(num_nodes).copied());
+
+    Ok(DcSolution {
+        node_voltages,
+        branch_currents,
+        num_nodes,
+    })
+}
+
+/// Solve a DC system using GMRES.
+fn solve_dc_gmres(mna: &MnaSystem, config: &GmresConfig) -> Result<DVector<f64>> {
+    let size = mna.size();
+
+    // Build sparse operator from triplets
+    let operator = SparseRealOperator::from_triplets(size, &mna.triplets)
+        .ok_or_else(|| crate::error::Error::SolverError("Failed to build sparse operator".into()))?;
+
+    // Build Jacobi preconditioner
+    let preconditioner = JacobiPreconditioner::from_triplets(size, &mna.triplets);
+
+    // Convert RHS to slice
+    let rhs: Vec<f64> = mna.rhs().iter().copied().collect();
+
+    // Solve with preconditioned GMRES
+    let gmres_result = crate::gmres::solve_gmres_real_preconditioned(
+        &operator as &dyn RealOperator,
+        &preconditioner as &dyn RealPreconditioner,
+        &rhs,
+        config,
+    );
+
+    if !gmres_result.converged {
+        log::warn!(
+            "DC GMRES did not converge after {} iterations (residual: {:.2e})",
+            gmres_result.iterations,
+            gmres_result.residual
+        );
+    }
+
+    Ok(DVector::from_vec(gmres_result.x))
+}
+
+/// Run a DC sweep with configurable dispatch.
+///
+/// This variant allows specifying the compute backend and solver strategy.
+pub fn solve_dc_sweep_dispatched(
+    stamper: &dyn DcSweepStamper,
+    params: &DcSweepParams,
+    config: &DispatchConfig,
+) -> Result<DcSweepResult> {
+    let num_nodes = stamper.num_nodes();
+    let num_vsources = stamper.num_vsources();
+
+    // Generate sweep values
+    let mut sweep_values = Vec::new();
+    let direction = if params.step > 0.0 { 1.0 } else { -1.0 };
+    let mut value = params.start;
+    loop {
+        sweep_values.push(value);
+        value += params.step;
+        if direction * value > direction * params.stop * (1.0 + 1e-10) {
+            break;
+        }
+    }
+
+    let mut solutions = Vec::with_capacity(sweep_values.len());
+
+    for &sv in &sweep_values {
+        let mut mna = MnaSystem::new(num_nodes, num_vsources);
+        stamper.stamp_with_sweep(&mut mna, &params.source_name, sv);
+        let sol = solve_dc_dispatched(&mna, config)?;
+        solutions.push(sol);
+    }
+
+    Ok(DcSweepResult {
+        source_name: params.source_name.clone(),
+        sweep_values,
+        solutions,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_voltage_divider_dispatched() {
+        // Test solve_dc_dispatched with default config
+        let mut mna = MnaSystem::new(2, 1);
+        mna.stamp_voltage_source(Some(0), None, 0, 10.0);
+        mna.stamp_conductance(Some(0), Some(1), 1.0 / 1000.0);
+        mna.stamp_conductance(Some(1), None, 1.0 / 1000.0);
+
+        let config = DispatchConfig::default();
+        let solution = solve_dc_dispatched(&mna, &config).unwrap();
+
+        assert!((solution.voltage(NodeId::new(1)) - 10.0).abs() < 1e-10);
+        assert!((solution.voltage(NodeId::new(2)) - 5.0).abs() < 1e-10);
+    }
 
     #[test]
     fn test_voltage_divider() {

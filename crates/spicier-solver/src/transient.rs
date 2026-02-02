@@ -3,8 +3,13 @@
 use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
 
+use crate::dispatch::DispatchConfig;
 use crate::error::Result;
+use crate::gmres::GmresConfig;
 use crate::linear::{CachedSparseLu, SPARSE_THRESHOLD, solve_dense};
+use crate::operator::RealOperator;
+use crate::preconditioner::{JacobiPreconditioner, RealPreconditioner};
+use crate::sparse_operator::SparseRealOperator;
 
 /// Integration method for transient analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,7 +295,7 @@ pub fn solve_transient(
             };
             solver.solve(&mna.triplets, mna.rhs())?
         } else {
-            solve_dense(mna.matrix(), mna.rhs())?
+            solve_dense(&mna.to_dense_matrix(), mna.rhs())?
         };
 
         // Update reactive element states
@@ -314,9 +319,188 @@ pub fn solve_transient(
     Ok(result)
 }
 
+/// Run transient simulation with configurable dispatch.
+///
+/// This variant allows specifying the compute backend and solver strategy.
+/// For large systems, can use GMRES instead of direct LU.
+///
+/// # Arguments
+/// * `stamper` - Stamps resistive elements and sources
+/// * `caps` - Capacitor companion model states
+/// * `inds` - Inductor companion model states
+/// * `params` - Transient parameters
+/// * `dc_solution` - Initial DC operating point
+/// * `config` - Dispatch configuration
+pub fn solve_transient_dispatched(
+    stamper: &dyn TransientStamper,
+    caps: &mut [CapacitorState],
+    inds: &mut [InductorState],
+    params: &TransientParams,
+    dc_solution: &DVector<f64>,
+    config: &DispatchConfig,
+) -> Result<TransientResult> {
+    let num_nodes = stamper.num_nodes();
+    let num_vsources = stamper.num_vsources();
+    let mut solution = dc_solution.clone();
+    let h = params.tstep;
+    let mna_size = num_nodes + num_vsources;
+
+    // Decide solver strategy based on size
+    let use_gmres = config.use_gmres(mna_size);
+
+    // Initialize reactive element states from DC solution
+    for cap in caps.iter_mut() {
+        let vp = cap.node_pos.map(|i| solution[i]).unwrap_or(0.0);
+        let vn = cap.node_neg.map(|i| solution[i]).unwrap_or(0.0);
+        cap.v_prev = vp - vn;
+        cap.i_prev = 0.0;
+    }
+
+    for ind in inds.iter_mut() {
+        let vp = ind.node_pos.map(|i| solution[i]).unwrap_or(0.0);
+        let vn = ind.node_neg.map(|i| solution[i]).unwrap_or(0.0);
+        ind.v_prev = vp - vn;
+    }
+
+    let mut result = TransientResult {
+        points: Vec::new(),
+        num_nodes,
+    };
+
+    result.points.push(TimePoint {
+        time: 0.0,
+        solution: solution.clone(),
+    });
+
+    let num_steps = (params.tstop / h).ceil() as usize;
+
+    // Cached sparse solver for direct LU
+    let mut cached_solver: Option<CachedSparseLu> = None;
+
+    for step in 1..=num_steps {
+        let t = (step as f64) * h;
+
+        let mut mna = MnaSystem::new(num_nodes, num_vsources);
+        stamper.stamp_static(&mut mna);
+
+        match params.method {
+            IntegrationMethod::BackwardEuler => {
+                for cap in caps.iter() {
+                    cap.stamp_be(&mut mna, h);
+                }
+                for ind in inds.iter() {
+                    ind.stamp_be(&mut mna, h);
+                }
+            }
+            IntegrationMethod::Trapezoidal => {
+                for cap in caps.iter() {
+                    cap.stamp_trap(&mut mna, h);
+                }
+                for ind in inds.iter() {
+                    ind.stamp_trap(&mut mna, h);
+                }
+            }
+        }
+
+        solution = if use_gmres {
+            solve_transient_gmres(&mna, &config.gmres_config)?
+        } else if mna_size >= SPARSE_THRESHOLD {
+            let solver = match &cached_solver {
+                Some(s) => s,
+                None => {
+                    cached_solver = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
+                    cached_solver.as_ref().unwrap()
+                }
+            };
+            solver.solve(&mna.triplets, mna.rhs())?
+        } else {
+            solve_dense(&mna.to_dense_matrix(), mna.rhs())?
+        };
+
+        for cap in caps.iter_mut() {
+            let vp = cap.node_pos.map(|i| solution[i]).unwrap_or(0.0);
+            let vn = cap.node_neg.map(|i| solution[i]).unwrap_or(0.0);
+            cap.update(vp - vn, h, params.method);
+        }
+        for ind in inds.iter_mut() {
+            let vp = ind.node_pos.map(|i| solution[i]).unwrap_or(0.0);
+            let vn = ind.node_neg.map(|i| solution[i]).unwrap_or(0.0);
+            ind.update(vp - vn, h, params.method);
+        }
+
+        result.points.push(TimePoint {
+            time: t,
+            solution: solution.clone(),
+        });
+    }
+
+    Ok(result)
+}
+
+/// Solve a transient timestep using GMRES.
+fn solve_transient_gmres(mna: &MnaSystem, config: &GmresConfig) -> Result<DVector<f64>> {
+    let size = mna.size();
+
+    let operator = SparseRealOperator::from_triplets(size, &mna.triplets)
+        .ok_or_else(|| crate::error::Error::SolverError("Failed to build sparse operator".into()))?;
+
+    let preconditioner = JacobiPreconditioner::from_triplets(size, &mna.triplets);
+    let rhs: Vec<f64> = mna.rhs().iter().copied().collect();
+
+    let gmres_result = crate::gmres::solve_gmres_real_preconditioned(
+        &operator as &dyn RealOperator,
+        &preconditioner as &dyn RealPreconditioner,
+        &rhs,
+        config,
+    );
+
+    if !gmres_result.converged {
+        log::warn!(
+            "Transient GMRES did not converge after {} iterations (residual: {:.2e})",
+            gmres_result.iterations,
+            gmres_result.residual
+        );
+    }
+
+    Ok(DVector::from_vec(gmres_result.x))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::DispatchConfig;
+
+    #[test]
+    fn test_transient_dispatched() {
+        // Simple RC circuit with dispatched solver
+        struct SimpleRcStamper;
+        impl TransientStamper for SimpleRcStamper {
+            fn stamp_static(&self, mna: &mut MnaSystem) {
+                mna.stamp_voltage_source(Some(0), None, 0, 5.0);
+                mna.stamp_conductance(Some(0), Some(1), 1.0 / 1000.0);
+            }
+            fn num_nodes(&self) -> usize { 2 }
+            fn num_vsources(&self) -> usize { 1 }
+        }
+
+        let mut caps = vec![CapacitorState::new(1e-6, Some(1), None)];
+        let params = TransientParams {
+            tstop: 1e-3,
+            tstep: 100e-6,
+            method: IntegrationMethod::BackwardEuler,
+        };
+        let dc = DVector::from_vec(vec![5.0, 0.0, -0.005]);
+        let config = DispatchConfig::default();
+
+        let result = solve_transient_dispatched(
+            &SimpleRcStamper, &mut caps, &mut [], &params, &dc, &config
+        ).unwrap();
+
+        // Should have 11 points (0 to 1ms in 100us steps)
+        assert_eq!(result.points.len(), 11);
+        // Capacitor should be charging
+        assert!(result.points.last().unwrap().solution[1] > 0.0);
+    }
 
     /// Simple RC circuit stamper: V1 -- R -- node0 -- C -- GND
     struct RcCircuitStamper {
@@ -435,12 +619,13 @@ mod tests {
         let mut mna = MnaSystem::new(1, 0);
         let h = 1e-6;
         cap.stamp_be(&mut mna, h);
+        let matrix = mna.to_dense_matrix();
 
         // Geq = C/h = 1e-6/1e-6 = 1.0
         assert!(
-            (mna.matrix()[(0, 0)] - 1.0).abs() < 1e-10,
+            (matrix[(0, 0)] - 1.0).abs() < 1e-10,
             "Geq = {} (expected 1.0)",
-            mna.matrix()[(0, 0)]
+            matrix[(0, 0)]
         );
 
         // Ieq = Geq * V_prev = 1.0 * 2.5 = 2.5

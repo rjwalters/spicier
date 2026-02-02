@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 spicier-core.workspace = true
+spicier-devices.workspace = true
 spicier-simd.workspace = true
 thiserror.workspace = true
 nalgebra.workspace = true
@@ -18,7 +19,6 @@ log.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
-spicier-devices.workspace = true
 
 [[bench]]
 name = "solver"

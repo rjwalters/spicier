@@ -2011,6 +2011,7 @@ dependencies = [
  "nalgebra",
  "num-traits",
  "spicier-core",
+ "spicier-simd",
  "thiserror 2.0.18",
 ]
 

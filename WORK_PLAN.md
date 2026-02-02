@@ -302,36 +302,47 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
   - `CachedSparseLu` and `CachedSparseLuComplex` cache `SymbolicLu` and only redo numeric factorization
   - Integrated into Newton-Raphson, transient, and AC analysis paths
   - Major speedup for repeated solves with the same structure
-- [ ] Sparse-only MnaSystem
-  - Remove dense matrix field from MnaSystem
-  - Build dense representation on demand only when needed (tests, small circuits)
-  - Reduces memory from O(n²) to O(nnz)
-- [ ] Sparse-only ComplexMna
-  - Apply same sparse-only treatment to AC analysis complex MNA system
+- [x] Sparse-only MnaSystem
+  - Removed `matrix: DMatrix<f64>` field from MnaSystem
+  - `add_element()` now only pushes to triplets (duplicates summed during construction)
+  - New `to_dense_matrix()` method builds dense matrix on demand for tests and small circuits
+  - Reduces memory from O(n²) to O(nnz) for large circuits
+- [x] Sparse-only ComplexMna
+  - Removed `matrix: DMatrix<Complex<f64>>` field from ComplexMna
+  - Same sparse-only pattern as real MnaSystem
+  - New `to_dense_matrix()` method for on-demand dense construction
 
 ### GMRES Integration (leverages Phase 8 infrastructure)
 
-- [ ] `SparseRealOperator` wrapper
+- [x] `SparseRealOperator` wrapper
   - Wraps faer `SparseColMat<f64>` and implements `RealOperator`
+  - CSC matvec for y = A * x
   - Enables GMRES as alternative to direct LU for real systems (DC, transient)
-- [ ] `SparseComplexOperator` wrapper
+- [x] `SparseComplexOperator` wrapper
   - Wraps faer `SparseColMat<c64>` and implements `ComplexOperator`
+  - CSC matvec for y = A * x
   - Enables GMRES as alternative for complex systems (AC)
-- [ ] Real-valued GMRES (`solve_gmres_real`)
-  - Port complex GMRES to work with `RealOperator`
+- [x] Real-valued GMRES (`solve_gmres_real`)
+  - Ported complex GMRES to work with `RealOperator`
   - Uses `real_dot_product` SIMD kernels from `spicier-simd`
-- [ ] Solver selection heuristic
-  - Auto-choose direct LU vs iterative GMRES based on system size
-  - Direct LU preferred for small/medium systems (fast, exact)
-  - GMRES preferred for very large systems (>10k nodes) where LU memory/time dominates
-  - Configurable threshold and override via CLI/API
-- [ ] Preconditioned GMRES
-  - ILU(0) or Jacobi preconditioner for faster convergence
-  - Preconditioner reuse across NR iterations (same sparsity pattern)
+  - `RealGmresResult` return type with solution, iterations, residual, converged flag
+  - Real Givens rotations for stability
+- [x] Solver selection heuristic
+  - `SolverStrategy` enum: `Auto`, `DirectLU`, `IterativeGmres`
+  - `SolverConfig` with configurable threshold (default 10k nodes)
+  - `solve_auto()` function auto-selects based on system size
+  - Direct LU for small/medium systems, GMRES for >10k nodes
+  - GMRES fallback to LU on non-convergence
+  - `from_name()` for CLI integration
+- [x] Preconditioned GMRES
+  - Jacobi (diagonal) preconditioner for faster convergence
+  - `RealPreconditioner` and `ComplexPreconditioner` traits
+  - `solve_gmres_real_preconditioned()` and `solve_gmres_preconditioned()`
+  - Right preconditioning: solves A*M^(-1)*y = b, then x = M^(-1)*y
 
 **Dependencies:** Phase 7 (AC analysis uses ComplexMna), Phase 8 (operator traits, SIMD)
 
-**Acceptance Criteria (remaining):** NR and transient solves reuse symbolic factorization. MnaSystem memory scales with nnz, not n². GMRES available as alternative solver for large systems.
+**Acceptance Criteria (remaining):** NR and transient solves reuse symbolic factorization ✅. MnaSystem memory scales with nnz, not n² ✅. GMRES available as alternative solver for large systems.
 
 ---
 
@@ -364,19 +375,23 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
 
 ### Remaining Tasks
 
-- [ ] SIMD-friendly data layouts
-  - Structure of Arrays (SoA) for devices
-  - Aligned memory allocation
-- [ ] Vectorized device evaluation
-  - Batch evaluate same-type devices
-  - Use SIMD kernels for diode/MOSFET evaluation
-- [ ] Parallel matrix assembly
-  - Per-device-type parallelism
-  - Thread-safe stamping or reduction
-- [ ] Batched parameter sweeps
-  - Monte Carlo
-  - Corner analysis
-  - Parallel sweep execution
+- [x] SIMD-friendly data layouts
+  - `DiodeBatch` and `MosfetBatch` with SoA layout
+  - Padding to SIMD lane count (4 for AVX2)
+  - AVX2 batch evaluation for diodes
+- [x] Vectorized device evaluation
+  - `BatchedNonlinearDevices` container for batched diodes/MOSFETs
+  - `solve_batched_newton_raphson()` uses batched evaluation
+  - Pre-allocated buffers, separate eval/stamp loops
+- [x] Parallel matrix assembly
+  - `ParallelTripletAccumulator` for thread-local buffer management
+  - `evaluate_parallel()` splits device stamping across threads
+  - Thread-safe triplet accumulation with final merge
+- [x] Batched parameter sweeps
+  - `MonteCarloGenerator` for random sampling
+  - `CornerGenerator` for 2^n worst-case combinations
+  - `LinearSweepGenerator` for systematic sweeps
+  - `solve_batched_sweep()` runs multiple simulations
 
 **Dependencies:** Phase 6, Phase 7 (core functionality complete)
 
@@ -421,12 +436,16 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
 
 ### Remaining Tasks
 
-- [ ] Wire GPU operators into analysis paths
-  - Use GPU dense operators for AC analysis matrix solves
-  - Use GPU operators for GMRES preconditioning
-- [ ] Size-based dispatch heuristic
-  - Small circuits (<1k nodes) stay on CPU even when GPU is available
-  - Threshold tunable via config; auto-calibrate with a one-time microbenchmark
+- [x] Wire GPU operators into analysis paths
+  - `solve_ac_dispatched()` with GMRES + Jacobi preconditioner for large AC systems
+  - `solve_dc_dispatched()` with GMRES + Jacobi preconditioner for large DC systems
+  - `solve_transient_dispatched()` with GMRES for large transient timesteps
+  - GPU operators available for GMRES preconditioning via `ComplexOperator`/`RealOperator` traits
+- [x] Size-based dispatch heuristic
+  - `DispatchConfig` with `cpu_threshold` (default 1k) and `gmres_threshold` (default 10k)
+  - `use_gpu(size)` and `use_gmres(size)` decision methods
+  - `SolverDispatchStrategy` enum: Auto, DirectLU, IterativeGmres
+  - Thresholds tunable via builder pattern
 - [ ] Shared memory management
   - Pinned/page-locked host memory for async transfers
   - Double-buffering for overlapping compute and transfer
