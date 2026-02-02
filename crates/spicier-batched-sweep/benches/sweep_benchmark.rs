@@ -7,6 +7,8 @@ use spicier_batched_sweep::GpuBatchConfig;
 use spicier_batched_sweep::{BackendSelector, BackendType, solve_batched_sweep_gpu};
 #[cfg(feature = "faer")]
 use spicier_batched_sweep::{BatchedLuSolver, FaerBatchedSolver, FaerSparseCachedBatchedSolver};
+#[cfg(feature = "parallel")]
+use spicier_batched_sweep::{solve_batched_sweep_parallel, ParallelSweepConfig};
 use spicier_solver::{
     ConvergenceCriteria, DispatchConfig, MonteCarloGenerator, ParameterVariation, SweepStamper,
     SweepStamperFactory,
@@ -392,10 +394,98 @@ fn bench_dense_vs_sparse_cached(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "faer")]
+/// Benchmark comparing sequential vs parallel CPU sweep execution.
+///
+/// This benchmark measures the speedup from rayon parallelization.
+#[cfg(feature = "parallel")]
+fn bench_parallel_vs_sequential(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parallel_vs_sequential");
+    group.sample_size(20);
+
+    // Test configurations: (batch_size, matrix_size)
+    // Larger batches benefit more from parallelism
+    let configs = [
+        (100, 50),
+        (500, 50),
+        (1000, 50),
+        (1000, 100),
+        (2000, 50),
+        (2000, 100),
+    ];
+
+    for (batch_size, matrix_size) in configs {
+        let param = format!("{}x{}", batch_size, matrix_size);
+
+        let factory = DividerFactory::new(matrix_size);
+        let generator = MonteCarloGenerator::new(batch_size).with_seed(42);
+        let variations = vec![
+            ParameterVariation::new("R1", 1000.0)
+                .with_bounds(500.0, 1500.0)
+                .with_sigma(0.1),
+        ];
+        let criteria = ConvergenceCriteria::default();
+        let config = DispatchConfig::default();
+        let backend = BackendSelector::auto();
+        let parallel_config = ParallelSweepConfig::default();
+
+        // Sequential (batched) benchmark
+        group.bench_with_input(
+            BenchmarkId::new("sequential", &param),
+            &(),
+            |b, _| {
+                b.iter(|| {
+                    solve_batched_sweep_gpu(
+                        &backend,
+                        &factory,
+                        &generator,
+                        &variations,
+                        &criteria,
+                        &config,
+                    )
+                    .unwrap()
+                })
+            },
+        );
+
+        // Parallel benchmark
+        group.bench_with_input(
+            BenchmarkId::new("parallel", &param),
+            &(),
+            |b, _| {
+                b.iter(|| {
+                    solve_batched_sweep_parallel(
+                        &backend,
+                        &factory,
+                        &generator,
+                        &variations,
+                        &criteria,
+                        &config,
+                        &parallel_config,
+                    )
+                    .unwrap()
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+#[cfg(all(feature = "faer", feature = "parallel"))]
+criterion_group!(
+    benches,
+    bench_sweep_backends,
+    bench_dense_vs_sparse_cached,
+    bench_parallel_vs_sequential
+);
+
+#[cfg(all(feature = "faer", not(feature = "parallel")))]
 criterion_group!(benches, bench_sweep_backends, bench_dense_vs_sparse_cached);
 
-#[cfg(not(feature = "faer"))]
+#[cfg(all(not(feature = "faer"), feature = "parallel"))]
+criterion_group!(benches, bench_sweep_backends, bench_parallel_vs_sequential);
+
+#[cfg(all(not(feature = "faer"), not(feature = "parallel")))]
 criterion_group!(benches, bench_sweep_backends);
 
 criterion_main!(benches);

@@ -18,6 +18,8 @@ mps = ["dep:spicier-backend-mps"]
 faer = ["dep:faer"]
 # Apple Accelerate framework (macOS only) - uses direct FFI, no external deps
 accelerate = []
+# Parallel CPU sweeps using rayon
+parallel = ["dep:rayon"]
 
 [dependencies]
 spicier-solver.workspace = true
@@ -32,6 +34,9 @@ spicier-backend-mps = { workspace = true, optional = true }
 
 # High-performance linear algebra (optimized CPU with SIMD)
 faer = { workspace = true, optional = true }
+
+# Parallel CPU processing
+rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true

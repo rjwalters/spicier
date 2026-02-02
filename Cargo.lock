@@ -2159,6 +2159,7 @@ dependencies = [
  "faer",
  "log",
  "nalgebra",
+ "rayon",
  "spicier-backend-cuda",
  "spicier-backend-metal",
  "spicier-backend-mps",
