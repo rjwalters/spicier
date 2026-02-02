@@ -7,7 +7,7 @@ use crate::batch_layout::{BatchLayout, pack_matrices_f32, pack_rhs_f32, unpack_s
 use crate::context::WgpuContext;
 use crate::error::{Result, WgpuError};
 use bytemuck::{Pod, Zeroable};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use wgpu::util::DeviceExt;
 
 /// Maximum matrix dimension supported (limited by workgroup shared memory).
@@ -96,12 +96,79 @@ impl GpuBatchConfig {
     }
 }
 
+/// Minimum buffer capacity to allocate (prevents thrashing for tiny allocations).
+const MIN_BUFFER_ELEMENTS: usize = 1024;
+
+/// Cached GPU buffers for reuse across solve_batch calls.
+struct CachedBuffers {
+    /// Capacity for matrix data (in f32 elements, not bytes).
+    matrix_capacity: usize,
+    /// Capacity for RHS/solution data (in f32 elements).
+    rhs_capacity: usize,
+    /// Capacity for info data (in i32 elements = batch_size).
+    info_capacity: usize,
+    /// Cached matrix dimension (bind group depends on uniform buffer contents).
+    cached_n: usize,
+    /// Cached layout info for bind group invalidation.
+    cached_row_stride: usize,
+    cached_matrix_stride: usize,
+
+    // GPU buffers (None until first use)
+    matrix_buffer: Option<wgpu::Buffer>,
+    rhs_buffer: Option<wgpu::Buffer>,
+    info_buffer: Option<wgpu::Buffer>,
+    solution_staging: Option<wgpu::Buffer>,
+    info_staging: Option<wgpu::Buffer>,
+
+    // Bind group (recreated when buffers change or dimensions change)
+    bind_group: Option<wgpu::BindGroup>,
+    // Uniform buffer cached for the bind group
+    uniform_buffer: Option<wgpu::Buffer>,
+}
+
+impl CachedBuffers {
+    fn new() -> Self {
+        Self {
+            matrix_capacity: 0,
+            rhs_capacity: 0,
+            info_capacity: 0,
+            cached_n: 0,
+            cached_row_stride: 0,
+            cached_matrix_stride: 0,
+            matrix_buffer: None,
+            rhs_buffer: None,
+            info_buffer: None,
+            solution_staging: None,
+            info_staging: None,
+            bind_group: None,
+            uniform_buffer: None,
+        }
+    }
+
+    /// Check if cached buffers can accommodate the given sizes.
+    fn can_accommodate(&self, matrix_elems: usize, rhs_elems: usize, info_elems: usize) -> bool {
+        self.matrix_capacity >= matrix_elems
+            && self.rhs_capacity >= rhs_elems
+            && self.info_capacity >= info_elems
+    }
+
+    /// Check if bind group can be reused (same dimensions and layout).
+    fn can_reuse_bind_group(&self, n: usize, row_stride: usize, matrix_stride: usize) -> bool {
+        self.bind_group.is_some()
+            && self.cached_n == n
+            && self.cached_row_stride == row_stride
+            && self.cached_matrix_stride == matrix_stride
+    }
+}
+
 /// GPU-accelerated batched LU solver using wgpu/Metal compute shaders.
 pub struct MetalBatchedLuSolver {
     ctx: Arc<WgpuContext>,
     config: GpuBatchConfig,
     pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+    /// Cached buffers with interior mutability for reuse across calls.
+    cached: RwLock<CachedBuffers>,
 }
 
 impl MetalBatchedLuSolver {
@@ -196,7 +263,22 @@ impl MetalBatchedLuSolver {
             config,
             pipeline,
             bind_group_layout,
+            cached: RwLock::new(CachedBuffers::new()),
         })
+    }
+
+    /// Clear the cached buffers.
+    ///
+    /// Call this to free GPU memory or when changing problem characteristics significantly.
+    pub fn clear_cache(&self) {
+        let mut cache = self.cached.write().unwrap();
+        *cache = CachedBuffers::new();
+    }
+
+    /// Check if buffers are cached.
+    pub fn has_cached_buffers(&self) -> bool {
+        let cache = self.cached.read().unwrap();
+        cache.matrix_buffer.is_some()
     }
 
     /// Get the configuration.
@@ -261,90 +343,175 @@ impl MetalBatchedLuSolver {
             });
         }
 
+        let total_start = std::time::Instant::now();
+
         let device = &self.ctx.device;
         let queue = &self.ctx.queue;
 
         // Create batch layout for aligned memory access
         let layout = BatchLayout::new(n, batch_size);
+        let row_stride = layout.padded_row_stride();
+        let matrix_stride = layout.padded_matrix_size();
 
         // Convert f64 -> f32 with col-major -> row-major transpose and alignment padding
+        let convert_start = std::time::Instant::now();
         let matrices_f32 = pack_matrices_f32(matrices, n, batch_size, &layout);
         let rhs_f32 = pack_rhs_f32(rhs);
+        let convert_time = convert_start.elapsed();
 
-        // Create uniform buffer with stride information for shader
-        let uniforms = Uniforms {
-            n: n as u32,
-            batch_size: batch_size as u32,
-            row_stride: layout.padded_row_stride() as u32,
-            matrix_stride: layout.padded_matrix_size() as u32,
-        };
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Batched LU Uniforms"),
-            contents: bytemuck::bytes_of(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        // Calculate required buffer capacities
+        let needed_matrix_elems = matrices_f32.len();
+        let needed_rhs_elems = rhs_f32.len();
+        let needed_info_elems = batch_size;
 
-        // Create matrix buffer (read-write, modified during factorization)
-        // Uses aligned layout for coalesced GPU memory access
-        let matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Batched LU Matrices"),
-            contents: bytemuck::cast_slice(&matrices_f32),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        // Acquire write lock to check and potentially update cache
+        let mut cache = self.cached.write().unwrap();
 
-        // Create RHS buffer (will also hold solutions)
-        let rhs_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Batched LU RHS"),
-            contents: bytemuck::cast_slice(&rhs_f32),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        });
+        // Check if we need to reallocate buffers
+        let need_buffer_realloc =
+            !cache.can_accommodate(needed_matrix_elems, needed_rhs_elems, needed_info_elems);
 
-        // Create info buffer
+        if need_buffer_realloc {
+            // Allocate with 2x headroom for future growth
+            let new_matrix_cap = (needed_matrix_elems * 2).max(MIN_BUFFER_ELEMENTS);
+            let new_rhs_cap = (needed_rhs_elems * 2).max(MIN_BUFFER_ELEMENTS);
+            let new_info_cap = (needed_info_elems * 2).max(MIN_BUFFER_ELEMENTS);
+
+            log::debug!(
+                "Reallocating GPU buffers: matrix {} -> {}, rhs {} -> {}, info {} -> {}",
+                cache.matrix_capacity,
+                new_matrix_cap,
+                cache.rhs_capacity,
+                new_rhs_cap,
+                cache.info_capacity,
+                new_info_cap
+            );
+
+            // Create matrix buffer (read-write, modified during factorization)
+            cache.matrix_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Batched LU Matrices (Cached)"),
+                size: (new_matrix_cap * std::mem::size_of::<f32>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+
+            // Create RHS buffer (will also hold solutions)
+            cache.rhs_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Batched LU RHS (Cached)"),
+                size: (new_rhs_cap * std::mem::size_of::<f32>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+
+            // Create info buffer
+            cache.info_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Batched LU Info (Cached)"),
+                size: (new_info_cap * std::mem::size_of::<i32>()) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+
+            // Create staging buffers for reading results
+            cache.solution_staging = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Solution Staging (Cached)"),
+                size: (new_rhs_cap * std::mem::size_of::<f32>()) as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+
+            cache.info_staging = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Info Staging (Cached)"),
+                size: (new_info_cap * std::mem::size_of::<i32>()) as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+
+            cache.matrix_capacity = new_matrix_cap;
+            cache.rhs_capacity = new_rhs_cap;
+            cache.info_capacity = new_info_cap;
+
+            // Invalidate bind group since buffers changed
+            cache.bind_group = None;
+            cache.uniform_buffer = None;
+        }
+
+        // Check if we need to recreate bind group (buffers changed or dimensions changed)
+        let need_bind_group_update =
+            need_buffer_realloc || !cache.can_reuse_bind_group(n, row_stride, matrix_stride);
+
+        if need_bind_group_update {
+            // Create uniform buffer with stride information for shader
+            let uniforms = Uniforms {
+                n: n as u32,
+                batch_size: batch_size as u32,
+                row_stride: row_stride as u32,
+                matrix_stride: matrix_stride as u32,
+            };
+
+            let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Batched LU Uniforms"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Batched LU Bind Group (Cached)"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: cache.matrix_buffer.as_ref().unwrap().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: cache.rhs_buffer.as_ref().unwrap().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: cache.info_buffer.as_ref().unwrap().as_entire_binding(),
+                    },
+                ],
+            });
+
+            cache.uniform_buffer = Some(uniform_buffer);
+            cache.bind_group = Some(bind_group);
+            cache.cached_n = n;
+            cache.cached_row_stride = row_stride;
+            cache.cached_matrix_stride = matrix_stride;
+        }
+
+        // Write data to cached buffers
+        let upload_start = std::time::Instant::now();
+        queue.write_buffer(
+            cache.matrix_buffer.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(&matrices_f32),
+        );
+        queue.write_buffer(
+            cache.rhs_buffer.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(&rhs_f32),
+        );
+
+        // Clear info buffer (reset singularity flags)
         let info_zeros: Vec<i32> = vec![0; batch_size];
-        let info_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Batched LU Info"),
-            contents: bytemuck::cast_slice(&info_zeros),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        });
+        queue.write_buffer(
+            cache.info_buffer.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(&info_zeros),
+        );
+        let upload_time = upload_start.elapsed();
 
-        // Create staging buffers for reading results
-        let solution_staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Solution Staging"),
-            size: (expected_rhs_len * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let info_staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Info Staging"),
-            size: (batch_size * std::mem::size_of::<i32>()) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Create bind group
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Batched LU Bind Group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: matrix_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: rhs_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: info_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        // Get references to cached resources
+        let bind_group = cache.bind_group.as_ref().unwrap();
+        let rhs_buffer = cache.rhs_buffer.as_ref().unwrap();
+        let info_buffer = cache.info_buffer.as_ref().unwrap();
+        let solution_staging = cache.solution_staging.as_ref().unwrap();
+        let info_staging = cache.info_staging.as_ref().unwrap();
 
         // Encode and submit compute work
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -357,28 +524,39 @@ impl MetalBatchedLuSolver {
                 timestamp_writes: None,
             });
             compute_pass.set_pipeline(&self.pipeline);
-            compute_pass.set_bind_group(0, &bind_group, &[]);
+            compute_pass.set_bind_group(0, bind_group, &[]);
             // One workgroup per matrix in the batch
             compute_pass.dispatch_workgroups(batch_size as u32, 1, 1);
         }
 
         // Copy results to staging buffers
         encoder.copy_buffer_to_buffer(
-            &rhs_buffer,
+            rhs_buffer,
             0,
-            &solution_staging,
+            solution_staging,
             0,
             (expected_rhs_len * std::mem::size_of::<f32>()) as u64,
         );
         encoder.copy_buffer_to_buffer(
-            &info_buffer,
+            info_buffer,
             0,
-            &info_staging,
+            info_staging,
             0,
             (batch_size * std::mem::size_of::<i32>()) as u64,
         );
 
+        let compute_start = std::time::Instant::now();
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Drop cache lock before blocking on GPU readback
+        drop(cache);
+        let submit_time = compute_start.elapsed();
+
+        // Re-acquire read lock to access staging buffers for readback
+        let readback_start = std::time::Instant::now();
+        let cache = self.cached.read().unwrap();
+        let solution_staging = cache.solution_staging.as_ref().unwrap();
+        let info_staging = cache.info_staging.as_ref().unwrap();
 
         // Read solutions
         let solutions = {
@@ -395,7 +573,7 @@ impl MetalBatchedLuSolver {
 
             let data = buffer_slice.get_mapped_range();
             let solutions_f32: &[f32] = bytemuck::cast_slice(&data);
-            let solutions = unpack_solutions_f64(solutions_f32);
+            let solutions = unpack_solutions_f64(&solutions_f32[..expected_rhs_len]);
             drop(data);
             solution_staging.unmap();
             solutions
@@ -416,7 +594,7 @@ impl MetalBatchedLuSolver {
 
             let data = buffer_slice.get_mapped_range();
             let info_array: &[i32] = bytemuck::cast_slice(&data);
-            let singular: Vec<usize> = info_array
+            let singular: Vec<usize> = info_array[..batch_size]
                 .iter()
                 .enumerate()
                 .filter_map(|(i, &v)| if v > 0 { Some(i) } else { None })
@@ -425,6 +603,16 @@ impl MetalBatchedLuSolver {
             info_staging.unmap();
             singular
         };
+
+        let readback_time = readback_start.elapsed();
+        let total_time = total_start.elapsed();
+
+        // Log timing breakdown for performance analysis
+        log::debug!(
+            "GPU solve batch ({}×{}, {} matrices): total={:?}, convert={:?}, upload={:?}, submit={:?}, readback={:?}",
+            n, n, batch_size,
+            total_time, convert_time, upload_time, submit_time, readback_time
+        );
 
         if !singular_indices.is_empty() {
             log::warn!(
@@ -583,5 +771,180 @@ mod tests {
         assert!(!config.should_use_gpu(100, 100)); // Batch too small
         assert!(config.should_use_gpu(100, 2000)); // Both OK
         assert!(!config.should_use_gpu(200, 2000)); // Matrix too large
+    }
+
+    #[test]
+    fn test_buffer_caching() {
+        let ctx = match try_create_context() {
+            Some(c) => c,
+            None => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let solver = MetalBatchedLuSolver::new(ctx).unwrap();
+
+        // Initially no buffers cached
+        assert!(!solver.has_cached_buffers());
+
+        let n = 2;
+        let batch_size = 2;
+        let matrices = vec![
+            1.0, 0.0, 0.0, 1.0, // Identity 0
+            1.0, 0.0, 0.0, 1.0, // Identity 1
+        ];
+        let rhs = vec![1.0, 2.0, 3.0, 4.0];
+
+        // First solve creates buffers
+        let result1 = solver.solve_batch(&matrices, &rhs, n, batch_size).unwrap();
+        assert!(solver.has_cached_buffers());
+        assert_eq!(result1.batch_size, 2);
+
+        // Second solve reuses buffers (same size)
+        let result2 = solver.solve_batch(&matrices, &rhs, n, batch_size).unwrap();
+        assert!(solver.has_cached_buffers());
+        assert_eq!(result2.batch_size, 2);
+
+        // Verify both give correct results
+        let sol1 = result1.solution(0).unwrap();
+        let sol2 = result2.solution(0).unwrap();
+        assert!((sol1[0] - sol2[0]).abs() < 1e-10);
+        assert!((sol1[1] - sol2[1]).abs() < 1e-10);
+
+        // Clear cache
+        solver.clear_cache();
+        assert!(!solver.has_cached_buffers());
+
+        // Solve again after clearing
+        let result3 = solver.solve_batch(&matrices, &rhs, n, batch_size).unwrap();
+        assert!(solver.has_cached_buffers());
+        let sol3 = result3.solution(0).unwrap();
+        assert!((sol1[0] - sol3[0]).abs() < 1e-10);
+        assert!((sol1[1] - sol3[1]).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_timing_breakdown() {
+        let ctx = match try_create_context() {
+            Some(c) => c,
+            None => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let solver = MetalBatchedLuSolver::new(ctx).unwrap();
+
+        // Test multiple configurations
+        let configs = [
+            (50, 1000),
+            (50, 5000),
+            (50, 10000),
+            (100, 1000),
+            (100, 2000),
+        ];
+
+        for (n, batch_size) in configs {
+            // Create batch of diagonally-dominant matrices
+            let mut matrices = Vec::with_capacity(batch_size * n * n);
+            let mut rhs = Vec::with_capacity(batch_size * n);
+
+            for batch_idx in 0..batch_size {
+                for col in 0..n {
+                    for row in 0..n {
+                        let val = if row == col {
+                            10.0 + (batch_idx as f64) * 0.001
+                        } else if (row as i32 - col as i32).abs() == 1 {
+                            -1.0
+                        } else {
+                            0.0
+                        };
+                        matrices.push(val);
+                    }
+                }
+                for i in 0..n {
+                    rhs.push((i + 1) as f64);
+                }
+            }
+
+            // Warm up (first call may have extra overhead)
+            let _ = solver.solve_batch(&matrices, &rhs, n, batch_size).unwrap();
+
+            // Time multiple iterations
+            let iterations = 3;
+            let start = std::time::Instant::now();
+            for _ in 0..iterations {
+                let _ = solver.solve_batch(&matrices, &rhs, n, batch_size).unwrap();
+            }
+            let elapsed = start.elapsed();
+            let avg_time = elapsed / iterations as u32;
+            let time_per_matrix = avg_time / batch_size as u32;
+
+            println!(
+                "GPU: {}x{}, {} batches -> {:?} total, {:?}/matrix",
+                n, n, batch_size, avg_time, time_per_matrix
+            );
+        }
+
+        // This test is informational, always passes
+        assert!(true);
+    }
+
+    #[test]
+    fn test_buffer_reallocation_on_size_increase() {
+        let ctx = match try_create_context() {
+            Some(c) => c,
+            None => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let solver = MetalBatchedLuSolver::new(ctx).unwrap();
+
+        // Start with small batch
+        let n = 2;
+        let small_matrices = vec![1.0, 0.0, 0.0, 1.0];
+        let small_rhs = vec![1.0, 2.0];
+
+        let result1 = solver.solve_batch(&small_matrices, &small_rhs, n, 1).unwrap();
+        assert!(solver.has_cached_buffers());
+        let sol1 = result1.solution(0).unwrap();
+        assert!((sol1[0] - 1.0).abs() < 1e-4);
+        assert!((sol1[1] - 2.0).abs() < 1e-4);
+
+        // Now use larger batch - should reallocate if needed
+        let large_matrices = vec![
+            1.0, 0.0, 0.0, 1.0, // Identity 0
+            1.0, 0.0, 0.0, 1.0, // Identity 1
+            1.0, 0.0, 0.0, 1.0, // Identity 2
+            1.0, 0.0, 0.0, 1.0, // Identity 3
+        ];
+        let large_rhs = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+
+        let result2 = solver.solve_batch(&large_matrices, &large_rhs, n, 4).unwrap();
+        assert_eq!(result2.batch_size, 4);
+
+        // Verify all solutions correct
+        for i in 0..4 {
+            let sol = result2.solution(i).unwrap();
+            let expected_0 = (i * 2 + 1) as f64;
+            let expected_1 = (i * 2 + 2) as f64;
+            assert!(
+                (sol[0] - expected_0).abs() < 1e-4,
+                "batch {}: sol[0] = {} (expected {})",
+                i,
+                sol[0],
+                expected_0
+            );
+            assert!(
+                (sol[1] - expected_1).abs() < 1e-4,
+                "batch {}: sol[1] = {} (expected {})",
+                i,
+                sol[1],
+                expected_1
+            );
+        }
     }
 }

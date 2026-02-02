@@ -471,7 +471,131 @@ fn bench_parallel_vs_sequential(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "faer", feature = "parallel"))]
+/// Benchmark to find GPU crossover point at larger scales.
+///
+/// Tests larger batch sizes and matrix sizes to find where GPU beats CPU.
+#[cfg(feature = "metal")]
+fn bench_gpu_crossover(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gpu_crossover");
+    group.sample_size(10); // Fewer samples for expensive large-scale tests
+
+    // Test at larger scales where GPU might win
+    let configs = [
+        // (batch_size, matrix_size)
+        (5000, 50),
+        (5000, 100),
+        (10000, 50),
+        (10000, 100),
+        (20000, 50),
+        (20000, 100),
+    ];
+
+    for (batch_size, matrix_size) in configs {
+        let param = format!("{}x{}", batch_size, matrix_size);
+
+        let factory = DividerFactory::new(matrix_size);
+        let generator = MonteCarloGenerator::new(batch_size).with_seed(42);
+        let variations = vec![
+            ParameterVariation::new("R1", 1000.0)
+                .with_bounds(500.0, 1500.0)
+                .with_sigma(0.1),
+        ];
+        let criteria = ConvergenceCriteria::default();
+        let config = DispatchConfig::default();
+
+        // Sequential Accelerate (baseline)
+        #[cfg(feature = "accelerate")]
+        {
+            let backend = BackendSelector::prefer_accelerate();
+            group.bench_with_input(
+                BenchmarkId::new("accelerate-seq", &param),
+                &(),
+                |b, _| {
+                    b.iter(|| {
+                        solve_batched_sweep_gpu(
+                            &backend,
+                            &factory,
+                            &generator,
+                            &variations,
+                            &criteria,
+                            &config,
+                        )
+                        .unwrap()
+                    })
+                },
+            );
+        }
+
+        // Parallel Accelerate
+        #[cfg(all(feature = "accelerate", feature = "parallel"))]
+        {
+            let backend = BackendSelector::prefer_accelerate();
+            let parallel_config = ParallelSweepConfig::default();
+            group.bench_with_input(
+                BenchmarkId::new("accelerate-par", &param),
+                &(),
+                |b, _| {
+                    b.iter(|| {
+                        solve_batched_sweep_parallel(
+                            &backend,
+                            &factory,
+                            &generator,
+                            &variations,
+                            &criteria,
+                            &config,
+                            &parallel_config,
+                        )
+                        .unwrap()
+                    })
+                },
+            );
+        }
+
+        // Metal GPU
+        {
+            let backend = BackendSelector::prefer_metal().with_config(GpuBatchConfig {
+                min_batch_size: 1,
+                min_matrix_size: 1,
+                max_batch_per_launch: 65535,
+            });
+
+            if let Ok(solver) = backend.create_solver() {
+                if solver.backend_type() == BackendType::Metal {
+                    group.bench_with_input(
+                        BenchmarkId::new("metal-gpu", &param),
+                        &(),
+                        |b, _| {
+                            b.iter(|| {
+                                solve_batched_sweep_gpu(
+                                    &backend,
+                                    &factory,
+                                    &generator,
+                                    &variations,
+                                    &criteria,
+                                    &config,
+                                )
+                                .unwrap()
+                            })
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    group.finish();
+}
+
+#[cfg(all(feature = "faer", feature = "parallel", feature = "metal"))]
+criterion_group!(
+    benches,
+    bench_sweep_backends,
+    bench_dense_vs_sparse_cached,
+    bench_parallel_vs_sequential,
+    bench_gpu_crossover
+);
+
+#[cfg(all(feature = "faer", feature = "parallel", not(feature = "metal")))]
 criterion_group!(
     benches,
     bench_sweep_backends,
