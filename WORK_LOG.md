@@ -1748,3 +1748,65 @@ if tracker.all_finished() {
 - Residual-based convergence checking
 - Iteration limit enforcement
 - Summary statistics
+
+### 9b-4: Memory Layout Optimization
+
+Implemented GPU-optimized memory layout with warp-aligned padding for coalesced memory access.
+
+**New modules:**
+- `spicier-batched-sweep/src/batch_layout.rs` - High-level layout utilities
+- `spicier-backend-metal/src/batch_layout.rs` - Backend-specific layout helpers
+
+**Key types:**
+```rust
+// Warp-aligned layout for GPU memory access
+const WARP_SIZE: usize = 32;
+
+struct BatchLayout {
+    n: usize,           // Matrix dimension
+    batch_size: usize,  // Number of matrices
+    padded_row_stride: usize,   // Rows aligned to WARP_SIZE
+    padded_matrix_size: usize,  // Total elements per matrix
+}
+
+impl BatchLayout {
+    fn new(n: usize, batch_size: usize) -> Self;
+    fn align_to_warp(size: usize) -> usize;
+    fn matrix_offset(batch_idx, row, col) -> usize;
+}
+```
+
+**Optimizations:**
+1. **Row padding** - Matrix rows padded to warp size (32) for coalesced GPU access
+2. **Combined transform** - f64→f32 + col-major→row-major + padding in single pass
+3. **Stride-based shader access** - WGSL shader uses `row_stride` and `matrix_stride` uniforms
+
+**WGSL shader changes:**
+```wgsl
+struct Uniforms {
+    n: u32,
+    batch_size: u32,
+    row_stride: u32,    // Padded row stride
+    matrix_stride: u32, // Padded matrix size
+}
+
+fn get_a(batch_idx: u32, row: u32, col: u32) -> f32 {
+    let mat_offset = batch_idx * uniforms.matrix_stride;
+    return matrices[mat_offset + row * uniforms.row_stride + col];
+}
+```
+
+**Example padding:**
+| Matrix Size | Padded Row Stride | Overhead |
+|-------------|-------------------|----------|
+| 10×10       | 32                | 220%     |
+| 32×32       | 32                | 0%       |
+| 50×50       | 64                | 28%      |
+| 100×100     | 128               | 28%      |
+
+**Tests:** 12 tests in `batch_layout` covering:
+- Warp alignment calculations
+- Layout creation with/without padding
+- Matrix offset calculations
+- Pack/unpack round-trips
+- Padding statistics

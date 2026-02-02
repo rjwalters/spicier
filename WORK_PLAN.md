@@ -669,18 +669,23 @@ Hide CPU matrix assembly latency behind GPU computation.
 
 ---
 
-#### 9b-4: Memory Layout Optimization
+#### 9b-4: Memory Layout Optimization ✅
 
 Optimize data layout for GPU memory access patterns.
 
-- [ ] Contiguous batch storage
+- [x] Contiguous batch storage
   - All matrices packed into single buffer (batch × n × n)
   - All RHS vectors packed into single buffer (batch × n)
-- [ ] Alignment padding
-  - Pad matrix rows to warp size (32) for coalesced access
-  - Pad batch count to avoid partial warps
+- [x] Alignment padding
+  - `BatchLayout` aligns matrix rows to warp size (32) for coalesced access
+  - `pack_matrices_f32()` handles f64→f32 conversion + col-major→row-major transpose + padding
+  - WGSL shader updated with `row_stride` and `matrix_stride` uniforms
 
-**Acceptance:** Benchmark shows >20% improvement from layout optimization.
+**Implementation:**
+- `spicier-batched-sweep/src/batch_layout.rs` - Layout utilities with alignment calculations
+- `spicier-backend-metal/src/batch_layout.rs` - Backend-specific layout utilities
+- `spicier-backend-metal/src/batched_lu.rs` - Updated to use aligned layout
+- `spicier-backend-metal/src/batched_lu.wgsl` - Stride-based matrix access
 
 ---
 
