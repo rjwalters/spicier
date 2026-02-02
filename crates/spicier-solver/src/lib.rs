@@ -137,44 +137,42 @@ pub use ac::{
     AcParams, AcResult, AcStamper, AcSweepType, ComplexMna, generate_frequencies, solve_ac,
     solve_ac_dispatched,
 };
+pub use backend::ComputeBackend;
+pub use batched_newton::{BatchedNonlinearDevices, LinearStamper, solve_batched_newton_raphson};
 pub use dc::{
     DcSolution, DcSweepParams, DcSweepResult, DcSweepStamper, solve_dc, solve_dc_dispatched,
     solve_dc_sweep, solve_dc_sweep_dispatched,
 };
+pub use dispatch::{DispatchConfig, DispatchedSolveInfo, GpuBatchConfig, SolverDispatchStrategy};
 pub use error::{Error, Result};
+pub use gmres::{
+    GmresConfig, GmresResult, RealGmresResult, solve_gmres, solve_gmres_preconditioned,
+    solve_gmres_real, solve_gmres_real_preconditioned,
+};
 pub use linear::{CachedSparseLu, CachedSparseLuComplex};
 pub use newton::{
     ConvergenceCriteria, GminSteppingParams, GminSteppingResult, NonlinearStamper, NrResult,
     ScaledNonlinearStamper, SourceSteppingParams, SourceSteppingResult, solve_newton_raphson,
     solve_with_gmin_stepping, solve_with_source_stepping,
 };
-pub use batched_newton::{
-    BatchedNonlinearDevices, LinearStamper, solve_batched_newton_raphson,
-};
-pub use transient::{
-    AdaptiveTransientParams, AdaptiveTransientResult, CapacitorState, InductorState,
-    InitialConditions, IntegrationMethod, TransientParams, TransientResult, TransientStamper,
-    solve_transient, solve_transient_adaptive, solve_transient_dispatched,
-};
-pub use backend::ComputeBackend;
-pub use gmres::{
-    GmresConfig, GmresResult, RealGmresResult, solve_gmres, solve_gmres_preconditioned,
-    solve_gmres_real, solve_gmres_real_preconditioned,
-};
 pub use operator::{ComplexOperator, RealOperator};
+pub use parallel::{
+    ParallelTripletAccumulator, parallel_ranges, stamp_conductance_triplets,
+    stamp_current_source_rhs,
+};
 pub use preconditioner::{
     ComplexJacobiPreconditioner, ComplexPreconditioner, IdentityPreconditioner,
     JacobiPreconditioner, RealPreconditioner,
 };
 pub use solver_select::{SolveResult, SolverConfig, SolverStrategy, solve_auto};
 pub use sparse_operator::{SparseComplexOperator, SparseRealOperator};
-pub use parallel::{
-    ParallelTripletAccumulator, parallel_ranges, stamp_conductance_triplets,
-    stamp_current_source_rhs,
-};
 pub use sweep::{
     BatchedSweepResult, CornerGenerator, LinearSweepGenerator, MonteCarloGenerator,
     ParameterVariation, SweepPoint, SweepPointGenerator, SweepStamper, SweepStamperFactory,
     SweepStatistics, solve_batched_sweep,
 };
-pub use dispatch::{DispatchConfig, DispatchedSolveInfo, SolverDispatchStrategy};
+pub use transient::{
+    AdaptiveTransientParams, AdaptiveTransientResult, CapacitorState, InductorState,
+    InitialConditions, IntegrationMethod, TransientParams, TransientResult, TransientStamper,
+    solve_transient, solve_transient_adaptive, solve_transient_dispatched,
+};

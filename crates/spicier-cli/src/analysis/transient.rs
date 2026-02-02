@@ -11,7 +11,7 @@ use spicier_solver::{
 use std::collections::HashMap;
 
 use crate::output::get_dc_print_nodes;
-use crate::stampers::{build_transient_state, NetlistNonlinearStamper, NetlistTransientStamper};
+use crate::stampers::{NetlistNonlinearStamper, NetlistTransientStamper, build_transient_state};
 
 /// Run transient time-domain analysis.
 #[allow(clippy::too_many_arguments)]

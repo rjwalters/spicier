@@ -9,6 +9,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Errors that can occur during validation.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     /// ngspice is not installed or not found in PATH.
     #[error("ngspice not found: {0}")]

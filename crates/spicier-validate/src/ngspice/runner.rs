@@ -61,8 +61,7 @@ pub fn ngspice_version(config: &NgspiceConfig) -> Result<String> {
 /// Run a netlist through ngspice and return the raw results.
 pub fn run_ngspice(netlist: &str, config: &NgspiceConfig) -> Result<RawfileData> {
     // Create temp files for netlist and output
-    let mut netlist_file =
-        NamedTempFile::new().map_err(|e| Error::TempFile(e.to_string()))?;
+    let mut netlist_file = NamedTempFile::new().map_err(|e| Error::TempFile(e.to_string()))?;
 
     // Ensure netlist ends with .end if not present
     let netlist = if !netlist.to_lowercase().contains(".end") {
@@ -89,7 +88,9 @@ pub fn run_ngspice(netlist: &str, config: &NgspiceConfig) -> Result<RawfileData>
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let child = cmd.spawn().map_err(|e| Error::NgspiceNotFound(e.to_string()))?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| Error::NgspiceNotFound(e.to_string()))?;
 
     // Wait with timeout
     let output = wait_with_timeout(child, Duration::from_secs(config.timeout_secs))?;
@@ -104,9 +105,8 @@ pub fn run_ngspice(netlist: &str, config: &NgspiceConfig) -> Result<RawfileData>
     }
 
     // Read and parse the raw file
-    let raw_data = std::fs::read(raw_file.path()).map_err(|e| {
-        Error::RawfileParseError(format!("failed to read rawfile: {}", e))
-    })?;
+    let raw_data = std::fs::read(raw_file.path())
+        .map_err(|e| Error::RawfileParseError(format!("failed to read rawfile: {}", e)))?;
 
     if raw_data.is_empty() {
         return Err(Error::RawfileParseError(
@@ -131,17 +131,25 @@ fn wait_with_timeout(
         match child.try_wait() {
             Ok(Some(status)) => {
                 // Process exited, collect output
-                let stdout = child.stdout.take().map(|mut s| {
-                    let mut buf = Vec::new();
-                    std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                    buf
-                }).unwrap_or_default();
+                let stdout = child
+                    .stdout
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = Vec::new();
+                        std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                        buf
+                    })
+                    .unwrap_or_default();
 
-                let stderr = child.stderr.take().map(|mut s| {
-                    let mut buf = Vec::new();
-                    std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                    buf
-                }).unwrap_or_default();
+                let stderr = child
+                    .stderr
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = Vec::new();
+                        std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                        buf
+                    })
+                    .unwrap_or_default();
 
                 return Ok(std::process::Output {
                     status,

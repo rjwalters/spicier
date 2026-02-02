@@ -99,6 +99,7 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
                         }
                         AnalysisCommand::Ac { .. } => ".AC".to_string(),
                         AnalysisCommand::Tran { .. } => ".TRAN".to_string(),
+                        _ => "(unknown analysis)".to_string(),
                     })
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -170,6 +171,9 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
                     &node_map,
                     &print_vars,
                 )?;
+            }
+            _ => {
+                eprintln!("Warning: unsupported analysis type, skipping");
             }
         }
     }

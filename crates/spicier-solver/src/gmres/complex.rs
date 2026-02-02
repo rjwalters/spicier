@@ -3,10 +3,10 @@
 use crate::operator::ComplexOperator;
 use crate::preconditioner::ComplexPreconditioner;
 use num_complex::Complex64 as C64;
-use spicier_simd::{complex_conjugate_dot_product, SimdCapability};
+use spicier_simd::{SimdCapability, complex_conjugate_dot_product};
 
-use super::helpers::{complex_givens_rotation, complex_vec_norm};
 use super::GmresConfig;
+use super::helpers::{complex_givens_rotation, complex_vec_norm};
 
 /// Result of a complex GMRES solve.
 #[derive(Debug, Clone)]

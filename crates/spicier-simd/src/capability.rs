@@ -4,6 +4,7 @@
 
 /// Detected SIMD capability level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SimdCapability {
     /// AVX-512 with 512-bit vectors (8 f64 per vector, 4 complex per iteration)
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

@@ -9,6 +9,7 @@ use std::fmt;
 
 /// The compute backend to use for matrix operations.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum ComputeBackend {
     /// CPU-only backend (always available).
     #[default]

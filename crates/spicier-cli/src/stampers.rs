@@ -274,7 +274,7 @@ impl AcStamper for NetlistAcStamper<'_> {
                         }
                     }
                 }
-                AcDeviceInfo::None => {}
+                AcDeviceInfo::None | _ => {}
             }
         }
     }
@@ -303,7 +303,7 @@ impl TransientStamper for NetlistTransientStamper<'_> {
                 TransientDeviceInfo::Capacitor { .. } | TransientDeviceInfo::Inductor { .. } => {
                     // Skip reactive devices; their companion models are stamped separately
                 }
-                TransientDeviceInfo::None => {
+                TransientDeviceInfo::None | _ => {
                     device.stamp_at_time(mna, time);
                 }
             }
@@ -356,7 +356,7 @@ pub fn build_transient_state(
             } => {
                 inds.push(InductorState::new(inductance, node_pos, node_neg));
             }
-            TransientDeviceInfo::None => {}
+            TransientDeviceInfo::None | _ => {}
         }
     }
 

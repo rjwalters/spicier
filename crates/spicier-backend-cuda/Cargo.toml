@@ -11,5 +11,6 @@ categories = ["mathematics", "science"]
 [dependencies]
 spicier-solver.workspace = true
 num-complex.workspace = true
+nalgebra.workspace = true
 cudarc.workspace = true
 log.workspace = true

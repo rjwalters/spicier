@@ -8,6 +8,10 @@ repository.workspace = true
 keywords = ["spice", "circuit", "solver", "newton-raphson", "gmres"]
 categories = ["science", "simulation", "mathematics"]
 
+[features]
+default = []
+cuda = []
+
 [dependencies]
 spicier-core.workspace = true
 spicier-devices.workspace = true

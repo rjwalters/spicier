@@ -424,7 +424,15 @@ mod tests {
     fn test_vcvs_stamp() {
         // E1: out=(1,0), ctrl=(2,0), gain=2.0, branch idx=0
         let mut mna = MnaSystem::new(2, 1);
-        let e = Vcvs::new("E1", NodeId::new(1), NodeId::GROUND, NodeId::new(2), NodeId::GROUND, 2.0, 0);
+        let e = Vcvs::new(
+            "E1",
+            NodeId::new(1),
+            NodeId::GROUND,
+            NodeId::new(2),
+            NodeId::GROUND,
+            2.0,
+            0,
+        );
         Stamp::stamp(&e, &mut mna);
         let matrix = mna.to_dense_matrix();
 
@@ -440,7 +448,14 @@ mod tests {
         // G1: out=(1,0), ctrl=(2,0), gm=0.001
         // Current gm * V(ctrl) enters out_pos (node 1)
         let mut mna = MnaSystem::new(2, 0);
-        let g = Vccs::new("G1", NodeId::new(1), NodeId::GROUND, NodeId::new(2), NodeId::GROUND, 0.001);
+        let g = Vccs::new(
+            "G1",
+            NodeId::new(1),
+            NodeId::GROUND,
+            NodeId::new(2),
+            NodeId::GROUND,
+            0.001,
+        );
         Stamp::stamp(&g, &mut mna);
         let matrix = mna.to_dense_matrix();
 

@@ -41,7 +41,10 @@ impl<'a> Parser<'a> {
         if tokens.is_empty() {
             return Err(Error::ParseError {
                 line,
-                message: format!("Subcircuit instance {} requires nodes and subcircuit name", name),
+                message: format!(
+                    "Subcircuit instance {} requires nodes and subcircuit name",
+                    name
+                ),
             });
         }
 
@@ -142,7 +145,11 @@ impl<'a> Parser<'a> {
         // e.g., R1 in instance X1 becomes R_X1_1 (preserving 'R' as first char)
         let elem_name = parts[0];
         let first_char = elem_name.chars().next().unwrap_or('R');
-        let rest = if elem_name.len() > 1 { &elem_name[1..] } else { "" };
+        let rest = if elem_name.len() > 1 {
+            &elem_name[1..]
+        } else {
+            ""
+        };
         expanded.push(format!("{}{}_{}", first_char, instance_prefix, rest));
 
         // Remaining parts: substitute nodes if in port map, otherwise prefix internal nodes
@@ -150,13 +157,21 @@ impl<'a> Parser<'a> {
             if let Some(mapped) = node_map.get(&part.to_uppercase()) {
                 // Port node - use the external connection
                 expanded.push(mapped.clone());
-            } else if part.parse::<f64>().is_ok() || part.contains('=') || parse_value(part).is_some() {
+            } else if part.parse::<f64>().is_ok()
+                || part.contains('=')
+                || parse_value(part).is_some()
+            {
                 // Value (including SPICE suffixes like 1k, 1u) or parameter - keep as-is
                 expanded.push(part.to_string());
             } else if part.to_uppercase() == "0" || part.to_uppercase() == "GND" {
                 // Ground - keep as-is
                 expanded.push(part.to_string());
-            } else if part.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
+            } else if part
+                .chars()
+                .next()
+                .map(|c| c.is_alphabetic())
+                .unwrap_or(false)
+            {
                 // Possibly a model name or internal node
                 // Check if it looks like a model reference (for D, M elements)
                 let upper = part.to_uppercase();

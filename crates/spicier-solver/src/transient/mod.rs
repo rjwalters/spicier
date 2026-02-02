@@ -26,7 +26,7 @@ pub use solver::{
     TransientStamper, solve_transient, solve_transient_adaptive, solve_transient_dispatched,
 };
 pub use types::{
-    AdaptiveTransientParams, InitialConditions, IntegrationMethod, TransientParams, TRBDF2_GAMMA,
+    AdaptiveTransientParams, InitialConditions, IntegrationMethod, TRBDF2_GAMMA, TransientParams,
 };
 
 #[cfg(test)]
@@ -62,15 +62,9 @@ mod tests {
         let dc = DVector::from_vec(vec![5.0, 0.0, -0.005]);
         let config = DispatchConfig::default();
 
-        let result = solve_transient_dispatched(
-            &SimpleRcStamper,
-            &mut caps,
-            &mut [],
-            &params,
-            &dc,
-            &config,
-        )
-        .unwrap();
+        let result =
+            solve_transient_dispatched(&SimpleRcStamper, &mut caps, &mut [], &params, &dc, &config)
+                .unwrap();
 
         // Should have 11 points (0 to 1ms in 100us steps)
         assert_eq!(result.points.len(), 11);

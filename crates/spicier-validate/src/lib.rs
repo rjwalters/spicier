@@ -59,8 +59,8 @@ pub use golden::{
 
 pub use ngspice::{
     AnalysisType, NgspiceAc, NgspiceConfig, NgspiceDcOp, NgspiceResult, NgspiceTransient,
-    RawVariable, RawfileData, RawfileHeader, is_ngspice_available, ngspice_version,
-    parse_rawfile, run_ngspice,
+    RawVariable, RawfileData, RawfileHeader, is_ngspice_available, ngspice_version, parse_rawfile,
+    run_ngspice,
 };
 
 pub use spicier::{SpicierAc, SpicierDcOp, SpicierResult, SpicierTransient, run_spicier};
@@ -80,9 +80,12 @@ pub fn compare_simulators(netlist: &str, config: &ComparisonConfig) -> Result<Co
     let sp_result = run_spicier(netlist)?;
 
     match (&ng_result, &sp_result) {
-        (NgspiceResult::DcOp(ng), SpicierResult::DcOp(sp)) => {
-            Ok(compare_dc_op(ng, sp, &config.dc, config.variables.as_deref()))
-        }
+        (NgspiceResult::DcOp(ng), SpicierResult::DcOp(sp)) => Ok(compare_dc_op(
+            ng,
+            sp,
+            &config.dc,
+            config.variables.as_deref(),
+        )),
         (NgspiceResult::Ac(ng), SpicierResult::Ac(sp)) => {
             Ok(compare_ac(ng, sp, &config.ac, config.variables.as_deref()))
         }
@@ -107,7 +110,13 @@ pub fn validate_against_golden(circuit: &GoldenCircuit) -> Result<ComparisonRepo
     let sp_result = run_spicier(&circuit.netlist)?;
 
     match (&circuit.analysis, &sp_result) {
-        (GoldenAnalysis::DcOp { results, tolerances }, SpicierResult::DcOp(sp)) => {
+        (
+            GoldenAnalysis::DcOp {
+                results,
+                tolerances,
+            },
+            SpicierResult::DcOp(sp),
+        ) => {
             let ng = NgspiceDcOp {
                 values: results.clone(),
             };
@@ -140,7 +149,10 @@ pub fn validate_against_golden(circuit: &GoldenCircuit) -> Result<ComparisonRepo
                 .collect();
             values.insert(node.clone(), complex_vals);
 
-            let ng = NgspiceAc { frequencies, values };
+            let ng = NgspiceAc {
+                frequencies,
+                values,
+            };
             let tol = AcTolerances {
                 magnitude_db: tolerances.mag_db,
                 phase_deg: tolerances.phase_deg,

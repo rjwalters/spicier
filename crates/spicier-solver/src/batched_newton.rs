@@ -5,7 +5,7 @@
 
 use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
-use spicier_devices::{DiodeBatch, MosfetBatch, BatchMosfetType};
+use spicier_devices::{BatchMosfetType, DiodeBatch, MosfetBatch};
 use spicier_simd::SimdCapability;
 
 use crate::error::Result;
@@ -95,7 +95,15 @@ impl BatchedNonlinearDevices {
         } else {
             BatchMosfetType::Pmos
         };
-        self.mosfets.push(mos_type, vth, beta, lambda, node_drain, node_gate, node_source);
+        self.mosfets.push(
+            mos_type,
+            vth,
+            beta,
+            lambda,
+            node_drain,
+            node_gate,
+            node_source,
+        );
     }
 
     /// Finalize batches (pad for SIMD) and allocate evaluation buffers.
@@ -390,7 +398,12 @@ impl BatchedNonlinearDevices {
                         Some(self.diodes.node_neg[i])
                     };
 
-                    stamp_conductance_triplets(&mut buf, node_pos, node_neg, self.buffers.diode_gd[i]);
+                    stamp_conductance_triplets(
+                        &mut buf,
+                        node_pos,
+                        node_neg,
+                        self.buffers.diode_gd[i],
+                    );
                 }
             }
 
@@ -683,8 +696,8 @@ mod tests {
             nvt: 0.02585,
         };
 
-        let simple_result = solve_newton_raphson(2, 1, &simple, &criteria, None)
-            .expect("Should converge");
+        let simple_result =
+            solve_newton_raphson(2, 1, &simple, &criteria, None).expect("Should converge");
 
         // Results should be very close (may differ slightly due to voltage limiting)
         assert!(

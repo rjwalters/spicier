@@ -132,19 +132,14 @@ impl DiodeBatch {
             SimdCapability::Avx512 | SimdCapability::Avx2 => {
                 unsafe { self.evaluate_batch_avx2(voltages, id_out, gd_out) };
             }
-            SimdCapability::Scalar => {
+            SimdCapability::Scalar | _ => {
                 self.evaluate_batch_scalar(voltages, id_out, gd_out);
             }
         }
     }
 
     /// Scalar implementation of batch evaluation.
-    pub fn evaluate_batch_scalar(
-        &self,
-        voltages: &[f64],
-        id_out: &mut [f64],
-        gd_out: &mut [f64],
-    ) {
+    pub fn evaluate_batch_scalar(&self, voltages: &[f64], id_out: &mut [f64], gd_out: &mut [f64]) {
         for i in 0..self.count {
             let vp = if self.node_pos[i] == usize::MAX {
                 0.0
@@ -170,12 +165,7 @@ impl DiodeBatch {
     /// AVX2 implementation of batch evaluation.
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[target_feature(enable = "avx2", enable = "fma")]
-    unsafe fn evaluate_batch_avx2(
-        &self,
-        voltages: &[f64],
-        id_out: &mut [f64],
-        gd_out: &mut [f64],
-    ) {
+    unsafe fn evaluate_batch_avx2(&self, voltages: &[f64], id_out: &mut [f64], gd_out: &mut [f64]) {
         #[cfg(target_arch = "x86")]
         use std::arch::x86::*;
         #[cfg(target_arch = "x86_64")]
@@ -641,7 +631,12 @@ mod tests {
         let mut batch = DiodeBatch::new();
         // Add 17 diodes (not a multiple of 4) to test both SIMD and remainder
         for i in 0..17 {
-            batch.push(1e-14 * (i as f64 % 5.0 + 1.0), 1.0 + (i as f64) * 0.02, Some(i), None);
+            batch.push(
+                1e-14 * (i as f64 % 5.0 + 1.0),
+                1.0 + (i as f64) * 0.02,
+                Some(i),
+                None,
+            );
         }
         batch.finalize();
 
@@ -687,7 +682,13 @@ mod tests {
         let mut gd = vec![0.0; batch.count];
         let mut ieq = vec![0.0; batch.count];
 
-        batch.evaluate_linearized_batch(&voltages, &mut id, &mut gd, &mut ieq, SimdCapability::Scalar);
+        batch.evaluate_linearized_batch(
+            &voltages,
+            &mut id,
+            &mut gd,
+            &mut ieq,
+            SimdCapability::Scalar,
+        );
 
         assert!(gd[0] > 0.0);
     }
@@ -697,9 +698,9 @@ mod tests {
         let mut batch = MosfetBatch::new();
         batch.push(
             BatchMosfetType::Nmos,
-            0.7,   // vth
-            2e-4,  // beta
-            0.0,   // lambda
+            0.7,     // vth
+            2e-4,    // beta
+            0.0,     // lambda
             Some(0), // drain
             Some(1), // gate
             None,    // source = ground
@@ -711,7 +712,13 @@ mod tests {
         let mut gds = vec![0.0; batch.count];
         let mut gm = vec![0.0; batch.count];
 
-        batch.evaluate_batch(&voltages, &mut ids, &mut gds, &mut gm, SimdCapability::Scalar);
+        batch.evaluate_batch(
+            &voltages,
+            &mut ids,
+            &mut gds,
+            &mut gm,
+            SimdCapability::Scalar,
+        );
 
         assert_eq!(ids[0], 0.0, "Cutoff: Ids should be 0");
         assert_eq!(gm[0], 0.0, "Cutoff: gm should be 0");
@@ -736,7 +743,13 @@ mod tests {
         let mut gds = vec![0.0; batch.count];
         let mut gm = vec![0.0; batch.count];
 
-        batch.evaluate_batch(&voltages, &mut ids, &mut gds, &mut gm, SimdCapability::Scalar);
+        batch.evaluate_batch(
+            &voltages,
+            &mut ids,
+            &mut gds,
+            &mut gm,
+            SimdCapability::Scalar,
+        );
 
         // Ids = beta/2 * Vov^2 = 2e-4/2 * 1.3^2 = 1e-4 * 1.69 = 1.69e-4
         let expected = 0.5 * 2e-4 * 1.3 * 1.3;
@@ -768,7 +781,13 @@ mod tests {
         let mut gds = vec![0.0; batch.count];
         let mut gm = vec![0.0; batch.count];
 
-        batch.evaluate_batch(&voltages, &mut ids, &mut gds, &mut gm, SimdCapability::Scalar);
+        batch.evaluate_batch(
+            &voltages,
+            &mut ids,
+            &mut gds,
+            &mut gm,
+            SimdCapability::Scalar,
+        );
 
         // Ids = beta * (Vov*Vds - Vds^2/2) = 2e-4 * (1.3*0.5 - 0.125) = 2e-4 * 0.525
         let expected = 2e-4 * (1.3 * 0.5 - 0.5 * 0.5 * 0.5);
@@ -801,7 +820,13 @@ mod tests {
         let mut gds = vec![0.0; batch.count];
         let mut gm = vec![0.0; batch.count];
 
-        batch.evaluate_batch(&voltages, &mut ids, &mut gds, &mut gm, SimdCapability::Scalar);
+        batch.evaluate_batch(
+            &voltages,
+            &mut ids,
+            &mut gds,
+            &mut gm,
+            SimdCapability::Scalar,
+        );
 
         assert!(ids[0] < 0.0, "PMOS Ids should be negative: {}", ids[0]);
     }

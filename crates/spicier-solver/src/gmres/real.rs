@@ -2,10 +2,10 @@
 
 use crate::operator::RealOperator;
 use crate::preconditioner::RealPreconditioner;
-use spicier_simd::{real_dot_product, SimdCapability};
+use spicier_simd::{SimdCapability, real_dot_product};
 
-use super::helpers::{real_givens_rotation, real_vec_norm};
 use super::GmresConfig;
+use super::helpers::{real_givens_rotation, real_vec_norm};
 
 /// Result of a real-valued GMRES solve.
 #[derive(Debug, Clone)]
@@ -27,11 +27,7 @@ pub struct RealGmresResult {
 ///
 /// This is more efficient than using the complex GMRES for real systems
 /// since it avoids complex arithmetic overhead.
-pub fn solve_gmres_real(
-    op: &dyn RealOperator,
-    b: &[f64],
-    config: &GmresConfig,
-) -> RealGmresResult {
+pub fn solve_gmres_real(op: &dyn RealOperator, b: &[f64], config: &GmresConfig) -> RealGmresResult {
     let simd_cap = SimdCapability::detect();
 
     let n = op.dim();
@@ -54,7 +50,11 @@ pub fn solve_gmres_real(
         // Compute residual r = b - A*x
         let mut ax = vec![0.0; n];
         op.apply(&x, &mut ax);
-        let mut r: Vec<f64> = b.iter().zip(ax.iter()).map(|(&bi, &axi)| bi - axi).collect();
+        let mut r: Vec<f64> = b
+            .iter()
+            .zip(ax.iter())
+            .map(|(&bi, &axi)| bi - axi)
+            .collect();
         let r_norm = real_vec_norm(&r, simd_cap);
 
         if r_norm / b_norm < config.tol {
@@ -247,7 +247,11 @@ pub fn solve_gmres_real_preconditioned(
         // Compute residual r = b - A*x
         let mut ax = vec![0.0; n];
         op.apply(&x, &mut ax);
-        let mut r: Vec<f64> = b.iter().zip(ax.iter()).map(|(&bi, &axi)| bi - axi).collect();
+        let mut r: Vec<f64> = b
+            .iter()
+            .zip(ax.iter())
+            .map(|(&bi, &axi)| bi - axi)
+            .collect();
         let r_norm = real_vec_norm(&r, simd_cap);
 
         if r_norm / b_norm < config.tol {
@@ -630,12 +634,7 @@ mod tests {
 
     #[test]
     fn preconditioned_gmres_from_triplets() {
-        let triplets = vec![
-            (0, 0, 4.0),
-            (0, 1, 1.0),
-            (1, 0, 1.0),
-            (1, 1, 3.0),
-        ];
+        let triplets = vec![(0, 0, 4.0), (0, 1, 1.0), (1, 0, 1.0), (1, 1, 3.0)];
         let matrix = vec![vec![4.0, 1.0], vec![1.0, 3.0]];
         let op = RealDenseOp::new(matrix);
         let precond = JacobiPreconditioner::from_triplets(2, &triplets);

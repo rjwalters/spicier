@@ -2,9 +2,7 @@
 //!
 //! These tests require ngspice to be installed.
 
-use spicier_validate::{
-    ComparisonConfig, NgspiceConfig, is_ngspice_available, compare_simulators,
-};
+use spicier_validate::{ComparisonConfig, NgspiceConfig, compare_simulators, is_ngspice_available};
 
 fn ngspice_available() -> bool {
     is_ngspice_available(&NgspiceConfig::default())

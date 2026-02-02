@@ -742,7 +742,10 @@ R2 2 0 1k
 
         let result = parse_full(input).unwrap();
         assert_eq!(result.print_commands.len(), 1);
-        assert_eq!(result.print_commands[0].analysis_type, PrintAnalysisType::Dc);
+        assert_eq!(
+            result.print_commands[0].analysis_type,
+            PrintAnalysisType::Dc
+        );
         assert_eq!(result.print_commands[0].variables.len(), 2);
 
         // Check first variable is V(1)
@@ -771,7 +774,10 @@ C1 2 0 1u
 
         let result = parse_full(input).unwrap();
         assert_eq!(result.print_commands.len(), 1);
-        assert_eq!(result.print_commands[0].analysis_type, PrintAnalysisType::Ac);
+        assert_eq!(
+            result.print_commands[0].analysis_type,
+            PrintAnalysisType::Ac
+        );
         assert_eq!(result.print_commands[0].variables.len(), 3);
 
         assert!(matches!(
@@ -803,7 +809,10 @@ X1 1 2 VDIV
         let result = parse_full(input).unwrap();
 
         // Check subcircuit was parsed
-        assert!(result.subcircuits.contains_key("VDIV"), "VDIV should be defined");
+        assert!(
+            result.subcircuits.contains_key("VDIV"),
+            "VDIV should be defined"
+        );
         let subckt = &result.subcircuits["VDIV"];
         assert_eq!(subckt.name, "VDIV");
         assert_eq!(subckt.ports, vec!["in", "out"]);

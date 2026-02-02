@@ -89,12 +89,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn cmd_compare(
-    netlist_path: PathBuf,
-    voltage_tol: f64,
-    current_tol: f64,
-    json: bool,
-) -> ExitCode {
+fn cmd_compare(netlist_path: PathBuf, voltage_tol: f64, current_tol: f64, json: bool) -> ExitCode {
     // Check ngspice availability
     let ng_config = NgspiceConfig::default();
     if !is_ngspice_available(&ng_config) {

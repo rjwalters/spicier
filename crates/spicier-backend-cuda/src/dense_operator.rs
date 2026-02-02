@@ -5,9 +5,7 @@
 
 use crate::context::CudaContext;
 use crate::error::{CudaError, Result};
-use cudarc::cublas::sys::{
-    cublasDgemv_v2, cublasOperation_t, cublasZgemv_v2, cuDoubleComplex,
-};
+use cudarc::cublas::sys::{cuDoubleComplex, cublasDgemv_v2, cublasOperation_t, cublasZgemv_v2};
 use cudarc::driver::{CudaSlice, DevicePtr, DevicePtrMut, DeviceRepr, ValidAsZeroBits};
 use num_complex::Complex64 as C64;
 use spicier_solver::operator::{ComplexOperator, RealOperator};
@@ -70,7 +68,12 @@ impl CudaComplexDenseOperator {
             .memcpy_stod(&gpu_data)
             .map_err(|e| CudaError::Transfer(format!("Host to device copy failed: {}", e)))?;
 
-        log::debug!("Uploaded {}x{} complex matrix to GPU ({} bytes)", n, n, n * n * 16);
+        log::debug!(
+            "Uploaded {}x{} complex matrix to GPU ({} bytes)",
+            n,
+            n,
+            n * n * 16
+        );
 
         Ok(Self {
             n,
@@ -221,7 +224,12 @@ impl CudaRealDenseOperator {
             .memcpy_stod(&matrix)
             .map_err(|e| CudaError::Transfer(format!("Host to device copy failed: {}", e)))?;
 
-        log::debug!("Uploaded {}x{} real matrix to GPU ({} bytes)", n, n, n * n * 8);
+        log::debug!(
+            "Uploaded {}x{} real matrix to GPU ({} bytes)",
+            n,
+            n,
+            n * n * 8
+        );
 
         Ok(Self {
             n,
@@ -389,9 +397,15 @@ mod tests {
         };
 
         let matrix = vec![
-            C64::new(1.0, 0.0), C64::new(1.0, 1.0), C64::new(1.0, 2.0),
-            C64::new(2.0, 0.0), C64::new(2.0, 1.0), C64::new(2.0, 2.0),
-            C64::new(3.0, 0.0), C64::new(3.0, 1.0), C64::new(3.0, 2.0),
+            C64::new(1.0, 0.0),
+            C64::new(1.0, 1.0),
+            C64::new(1.0, 2.0),
+            C64::new(2.0, 0.0),
+            C64::new(2.0, 1.0),
+            C64::new(2.0, 2.0),
+            C64::new(3.0, 0.0),
+            C64::new(3.0, 1.0),
+            C64::new(3.0, 2.0),
         ];
         let op = CudaComplexDenseOperator::from_matrix(ctx, matrix, 3)
             .unwrap()

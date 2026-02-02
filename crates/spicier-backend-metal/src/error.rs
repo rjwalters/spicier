@@ -4,6 +4,7 @@ use std::fmt;
 
 /// Metal/WebGPU backend error type.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum WgpuError {
     /// GPU device initialization failed.
     DeviceInit(String),

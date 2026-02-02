@@ -14,9 +14,9 @@
 use nalgebra::DVector;
 use num_complex::Complex;
 use serde::Deserialize;
+use spicier_core::NodeId;
 use spicier_core::mna::MnaSystem;
 use spicier_core::netlist::{Netlist, TransientDeviceInfo};
-use spicier_core::NodeId;
 use spicier_parser::{parse, parse_full};
 use spicier_solver::{
     AcParams, AcStamper, AcSweepType, CapacitorState, ComplexMna, ConvergenceCriteria,
@@ -288,8 +288,14 @@ C1 2 0 1u
     // Solution vector: [V1, V2, I_V1]
     let dc_solution = DVector::from_vec(vec![5.0, 0.0, 0.0]);
 
-    let result = solve_transient(&stamper, &mut capacitors, &mut vec![], &params, &dc_solution)
-        .expect("transient solve failed");
+    let result = solve_transient(
+        &stamper,
+        &mut capacitors,
+        &mut vec![],
+        &params,
+        &dc_solution,
+    )
+    .expect("transient solve failed");
 
     // Time constant τ = RC = 1k * 1µF = 1ms
     let tau = 1e-3;
@@ -508,8 +514,8 @@ fn test_ac_rc_lowpass_rolloff() {
     let params = AcParams {
         sweep_type: AcSweepType::Decade,
         num_points: 10,
-        fstart: f_c * 10.0,  // Start at 10x cutoff
-        fstop: f_c * 100.0,  // End at 100x cutoff
+        fstart: f_c * 10.0, // Start at 10x cutoff
+        fstop: f_c * 100.0, // End at 100x cutoff
     };
 
     let result = solve_ac(&RcAcStamper, &params).expect("AC solve failed");
@@ -641,7 +647,10 @@ D1 2 0
     let netlist = &parse_result.netlist;
 
     // Check if nonlinear devices present
-    assert!(netlist.has_nonlinear_devices(), "Expected nonlinear devices");
+    assert!(
+        netlist.has_nonlinear_devices(),
+        "Expected nonlinear devices"
+    );
 
     // Set up Newton-Raphson
     struct DiodeStamper<'a> {
@@ -848,10 +857,7 @@ R1 2 0 100
 
     // Current through inductor = V(2)/R1 = 10/100 = 0.1A
     let i_l1 = solution.current(1); // L1's current index
-    assert!(
-        (i_l1 - 0.1).abs() < 1e-6,
-        "I(L1) = {i_l1} (expected 0.1)"
-    );
+    assert!((i_l1 - 0.1).abs() < 1e-6, "I(L1) = {i_l1} (expected 0.1)");
 }
 
 // ============================================================================
@@ -1153,7 +1159,10 @@ fn test_tran_rl_time_constant() {
         }
     }
 
-    let stamper = RlStamper { voltage, resistance };
+    let stamper = RlStamper {
+        voltage,
+        resistance,
+    };
     let params = TransientParams {
         tstop: 5.0 * tau,
         tstep: tau / 20.0,
@@ -1364,8 +1373,8 @@ const AC_GOLDEN_DATA: &[AcGoldenData] = &[
         circuit_name: "rc_lowpass",
         points: &[
             // (frequency, node, magnitude_db, phase_deg)
-            (15.9, 1, -0.043, -5.7),   // f << f_c: ~0 dB
-            (159.2, 1, -3.01, -45.0),  // f = f_c: -3 dB, -45°
+            (15.9, 1, -0.043, -5.7),    // f << f_c: ~0 dB
+            (159.2, 1, -3.01, -45.0),   // f = f_c: -3 dB, -45°
             (1592.0, 1, -20.04, -84.3), // f >> f_c: -20 dB/decade
         ],
         mag_tolerance: 0.5,
@@ -1556,7 +1565,11 @@ fn find_circuit<'a>(data: &'a GoldenDataFile, name: &str) -> &'a GoldenCircuit {
 #[test]
 fn test_golden_dc_linear() {
     let data = load_golden_data("dc_linear.json");
-    println!("Loaded {} circuits from {}", data.circuits.len(), data.generator);
+    println!(
+        "Loaded {} circuits from {}",
+        data.circuits.len(),
+        data.generator
+    );
 
     for circuit in &data.circuits {
         println!("Testing: {} - {}", circuit.name, circuit.description);
@@ -1574,20 +1587,29 @@ fn test_golden_dc_linear() {
         let solution = solve_dc(&mna)
             .unwrap_or_else(|e| panic!("DC solve failed for {}: {}", circuit.name, e));
 
-        if let GoldenAnalysis::DcOp { results, tolerances } = &circuit.analysis {
+        if let GoldenAnalysis::DcOp {
+            results,
+            tolerances,
+        } = &circuit.analysis
+        {
             for (var_name, &expected) in results {
                 // Parse variable name: V(n) or I(source)
                 if var_name.starts_with("V(") && var_name.ends_with(')') {
                     let node_str = &var_name[2..var_name.len() - 1];
-                    let node_num: u32 = node_str.parse()
-                        .unwrap_or_else(|_| panic!("Invalid node in {}: {}", circuit.name, var_name));
+                    let node_num: u32 = node_str.parse().unwrap_or_else(|_| {
+                        panic!("Invalid node in {}: {}", circuit.name, var_name)
+                    });
                     let actual = solution.voltage(NodeId::new(node_num));
                     let tol = tolerances.voltage;
 
                     assert!(
                         (actual - expected).abs() < tol,
                         "{}: {} = {} (expected {}, tol {})",
-                        circuit.name, var_name, actual, expected, tol
+                        circuit.name,
+                        var_name,
+                        actual,
+                        expected,
+                        tol
                     );
                 }
                 // Skip I() variables for now - would need current extraction
@@ -1600,7 +1622,11 @@ fn test_golden_dc_linear() {
 #[test]
 fn test_golden_dc_controlled_sources() {
     let data = load_golden_data("dc_controlled_sources.json");
-    println!("Loaded {} circuits from {}", data.circuits.len(), data.generator);
+    println!(
+        "Loaded {} circuits from {}",
+        data.circuits.len(),
+        data.generator
+    );
 
     // Test a subset of the circuits that our parser supports
     let supported_circuits = ["vcvs_gain_10", "vccs_transconductance"];
@@ -1621,19 +1647,28 @@ fn test_golden_dc_controlled_sources() {
         let solution = solve_dc(&mna)
             .unwrap_or_else(|e| panic!("DC solve failed for {}: {}", circuit.name, e));
 
-        if let GoldenAnalysis::DcOp { results, tolerances } = &circuit.analysis {
+        if let GoldenAnalysis::DcOp {
+            results,
+            tolerances,
+        } = &circuit.analysis
+        {
             for (var_name, &expected) in results {
                 if var_name.starts_with("V(") && var_name.ends_with(')') {
                     let node_str = &var_name[2..var_name.len() - 1];
-                    let node_num: u32 = node_str.parse()
-                        .unwrap_or_else(|_| panic!("Invalid node in {}: {}", circuit.name, var_name));
+                    let node_num: u32 = node_str.parse().unwrap_or_else(|_| {
+                        panic!("Invalid node in {}: {}", circuit.name, var_name)
+                    });
                     let actual = solution.voltage(NodeId::new(node_num));
                     let tol = tolerances.voltage.max(1e-6); // Ensure reasonable tolerance
 
                     assert!(
                         (actual - expected).abs() < tol,
                         "{}: {} = {} (expected {}, tol {})",
-                        circuit.name, var_name, actual, expected, tol
+                        circuit.name,
+                        var_name,
+                        actual,
+                        expected,
+                        tol
                     );
                 }
             }
@@ -1648,9 +1683,15 @@ fn test_golden_ac_rc_lowpass() {
     let circuit = find_circuit(&data, "rc_lowpass_1khz");
     println!("Testing: {} - {}", circuit.name, circuit.description);
 
-    if let GoldenAnalysis::Ac { node, results, tolerances, .. } = &circuit.analysis {
+    if let GoldenAnalysis::Ac {
+        node,
+        results,
+        tolerances,
+        ..
+    } = &circuit.analysis
+    {
         // Parse the node number from "V(2)" - SPICE nodes are 1-based, solution indices are 0-based
-        let spice_node: usize = node[2..node.len()-1].parse().expect("invalid node");
+        let spice_node: usize = node[2..node.len() - 1].parse().expect("invalid node");
         let node_idx = spice_node - 1; // Convert SPICE node to solution index
 
         // Create an AC stamper for RC lowpass (1k resistor, 159nF capacitor)
@@ -1667,8 +1708,12 @@ fn test_golden_ac_rc_lowpass() {
                 mna.stamp_admittance(Some(1), None, yc);
             }
 
-            fn num_nodes(&self) -> usize { 2 }
-            fn num_vsources(&self) -> usize { 1 }
+            fn num_nodes(&self) -> usize {
+                2
+            }
+            fn num_vsources(&self) -> usize {
+                1
+            }
         }
 
         // Test each frequency point
@@ -1690,12 +1735,18 @@ fn test_golden_ac_rc_lowpass() {
             assert!(
                 (actual_mag - point.mag_db).abs() < tolerances.mag_db,
                 "At {} Hz: mag = {:.2} dB (expected {:.2} dB, tol {})",
-                point.freq, actual_mag, point.mag_db, tolerances.mag_db
+                point.freq,
+                actual_mag,
+                point.mag_db,
+                tolerances.mag_db
             );
             assert!(
                 (actual_phase - point.phase_deg).abs() < tolerances.phase_deg,
                 "At {} Hz: phase = {:.1}° (expected {:.1}°, tol {})",
-                point.freq, actual_phase, point.phase_deg, tolerances.phase_deg
+                point.freq,
+                actual_phase,
+                point.phase_deg,
+                tolerances.phase_deg
             );
         }
     }
@@ -1708,9 +1759,15 @@ fn test_golden_tran_rc_charging() {
     let circuit = find_circuit(&data, "rc_charging");
     println!("Testing: {} - {}", circuit.name, circuit.description);
 
-    if let GoldenAnalysis::Tran { params, node, results, tolerances } = &circuit.analysis {
+    if let GoldenAnalysis::Tran {
+        params,
+        node,
+        results,
+        tolerances,
+    } = &circuit.analysis
+    {
         // Parse the node number from "V(2)" - SPICE nodes are 1-based, solution indices are 0-based
-        let spice_node: usize = node[2..node.len()-1].parse().expect("invalid node");
+        let spice_node: usize = node[2..node.len() - 1].parse().expect("invalid node");
         let node_idx = spice_node - 1;
 
         // Build the circuit: V1=5V, R1=1k, C1=1uF, tau=1ms
@@ -1733,11 +1790,18 @@ fn test_golden_tran_rc_charging() {
                 mna.stamp_voltage_source(Some(0), None, 0, self.voltage);
                 mna.stamp_conductance(Some(0), Some(1), 1.0 / self.resistance);
             }
-            fn num_nodes(&self) -> usize { 2 }
-            fn num_vsources(&self) -> usize { 1 }
+            fn num_nodes(&self) -> usize {
+                2
+            }
+            fn num_vsources(&self) -> usize {
+                1
+            }
         }
 
-        let stamper = RcChargeStamper { voltage, resistance };
+        let stamper = RcChargeStamper {
+            voltage,
+            resistance,
+        };
         let tran_params = TransientParams {
             tstop: params.tstop,
             tstep: params.tstep,
@@ -1750,9 +1814,12 @@ fn test_golden_tran_rc_charging() {
         // Compare at each golden data point
         for point in results {
             // Find closest simulated point
-            let closest = result.points.iter()
+            let closest = result
+                .points
+                .iter()
                 .min_by(|a, b| {
-                    (a.time - point.time).abs()
+                    (a.time - point.time)
+                        .abs()
                         .partial_cmp(&(b.time - point.time).abs())
                         .unwrap()
                 })
@@ -1771,7 +1838,11 @@ fn test_golden_tran_rc_charging() {
             assert!(
                 (actual - point.value).abs() < effective_tol,
                 "At t={:.4}ms: V({}) = {:.3} (expected {:.3}, tol {})",
-                point.time * 1000.0, spice_node, actual, point.value, effective_tol
+                point.time * 1000.0,
+                spice_node,
+                actual,
+                point.value,
+                effective_tol
             );
         }
     }

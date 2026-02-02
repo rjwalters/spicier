@@ -7,6 +7,7 @@ use std::f64::consts::PI;
 
 /// A time-varying waveform specification.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Waveform {
     /// Constant DC value (time-independent).
     Dc(f64),
@@ -161,11 +162,7 @@ fn eval_pulse(v1: f64, v2: f64, td: f64, tr: f64, tf: f64, pw: f64, per: f64, t:
     }
 
     // Time within the period (or from delay if per=0)
-    let t_rel = if per > 0.0 {
-        (t - td) % per
-    } else {
-        t - td
-    };
+    let t_rel = if per > 0.0 { (t - td) % per } else { t - td };
 
     // Pulse shape: rise -> high -> fall -> low
     if t_rel < tr {
@@ -298,12 +295,7 @@ mod tests {
     #[test]
     fn test_pwl_waveform() {
         // PWL(0 0 1m 5 2m 5 3m 0)
-        let w = Waveform::pwl(vec![
-            (0.0, 0.0),
-            (1e-3, 5.0),
-            (2e-3, 5.0),
-            (3e-3, 0.0),
-        ]);
+        let w = Waveform::pwl(vec![(0.0, 0.0), (1e-3, 5.0), (2e-3, 5.0), (3e-3, 0.0)]);
 
         // At t=0
         assert_eq!(w.value_at(0.0), 0.0);

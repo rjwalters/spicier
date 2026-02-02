@@ -7,17 +7,19 @@ use std::collections::HashMap;
 
 use nalgebra::DVector;
 use num_complex::Complex;
+use spicier_core::NodeId;
 use spicier_core::mna::MnaSystem;
 use spicier_core::netlist::{AcDeviceInfo, TransientDeviceInfo};
-use spicier_core::NodeId;
 use spicier_parser::{AcSweepType, AnalysisCommand, ParseResult, parse_full};
-use spicier_solver::ac::{AcParams, AcResult, AcSweepType as SolverAcSweepType, ComplexMna, solve_ac};
+use spicier_solver::AcStamper;
+use spicier_solver::ac::{
+    AcParams, AcResult, AcSweepType as SolverAcSweepType, ComplexMna, solve_ac,
+};
 use spicier_solver::dc::{DcSolution, solve_dc};
 use spicier_solver::transient::{
     CapacitorState, InductorState, IntegrationMethod, TransientParams, TransientResult,
     TransientStamper, solve_transient,
 };
-use spicier_solver::AcStamper;
 
 use crate::error::{Error, Result};
 
@@ -221,8 +223,12 @@ pub fn run_spicier(netlist: &str) -> Result<SpicierResult> {
             fstop,
         } => run_ac(&parse_result, *sweep_type, *num_points, *fstart, *fstop),
         AnalysisCommand::Tran {
-            tstep, tstop, tstart, ..
+            tstep,
+            tstop,
+            tstart,
+            ..
         } => run_transient(&parse_result, *tstep, *tstop, *tstart),
+        _ => Err(Error::UnsupportedAnalysis(format!("{:?}", analysis))),
     }
 }
 
@@ -440,7 +446,7 @@ impl AcStamper for AcCircuitStamper<'_> {
                         }
                     }
                 }
-                AcDeviceInfo::None => {}
+                AcDeviceInfo::None | _ => {}
             }
         }
     }
@@ -467,9 +473,9 @@ fn run_ac(
     };
 
     let solver_sweep_type = match sweep_type {
-        AcSweepType::Lin => SolverAcSweepType::Linear,
         AcSweepType::Dec => SolverAcSweepType::Decade,
         AcSweepType::Oct => SolverAcSweepType::Octave,
+        AcSweepType::Lin | _ => SolverAcSweepType::Linear,
     };
 
     let params = AcParams {
@@ -501,7 +507,7 @@ impl TransientStamper for TransientCircuitStamper<'_> {
                 TransientDeviceInfo::Capacitor { .. } | TransientDeviceInfo::Inductor { .. } => {
                     // Skip reactive devices
                 }
-                TransientDeviceInfo::None => {
+                TransientDeviceInfo::None | _ => {
                     device.stamp_at_time(mna, time);
                 }
             }
@@ -552,7 +558,7 @@ fn build_transient_state(
             } => {
                 inds.push(InductorState::new(inductance, node_pos, node_neg));
             }
-            TransientDeviceInfo::None => {}
+            TransientDeviceInfo::None | _ => {}
         }
     }
 

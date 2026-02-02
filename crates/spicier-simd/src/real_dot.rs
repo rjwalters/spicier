@@ -41,13 +41,7 @@ pub fn real_dot_scalar(a: &[f64], b: &[f64]) -> f64 {
 ///
 /// Panics if vector sizes don't match matrix dimension.
 #[inline]
-pub fn real_matvec(
-    matrix: &[f64],
-    n: usize,
-    x: &[f64],
-    y: &mut [f64],
-    capability: SimdCapability,
-) {
+pub fn real_matvec(matrix: &[f64], n: usize, x: &[f64], y: &mut [f64], capability: SimdCapability) {
     assert_eq!(matrix.len(), n * n, "Matrix size mismatch");
     assert_eq!(x.len(), n, "Input vector size mismatch");
     assert_eq!(y.len(), n, "Output vector size mismatch");
@@ -185,7 +179,9 @@ mod tests {
     fn simd_vs_scalar_consistency() {
         let cap = SimdCapability::detect();
 
-        for size in [1, 2, 3, 4, 5, 7, 8, 15, 16, 31, 32, 63, 64, 100, 127, 128, 256] {
+        for size in [
+            1, 2, 3, 4, 5, 7, 8, 15, 16, 31, 32, 63, 64, 100, 127, 128, 256,
+        ] {
             let a: Vec<f64> = (0..size).map(|i| i as f64 * 0.1).collect();
             let b: Vec<f64> = (0..size).map(|i| (size - i) as f64 * 0.3).collect();
 
@@ -230,12 +226,8 @@ mod tests {
         let cap = SimdCapability::detect();
 
         for n in [1, 2, 3, 4, 8, 15, 16, 31, 32, 50, 64, 100] {
-            let matrix: Vec<f64> = (0..n * n)
-                .map(|i| (i as f64 * 0.1).sin())
-                .collect();
-            let x: Vec<f64> = (0..n)
-                .map(|i| (i as f64 * 0.3).cos())
-                .collect();
+            let matrix: Vec<f64> = (0..n * n).map(|i| (i as f64 * 0.1).sin()).collect();
+            let x: Vec<f64> = (0..n).map(|i| (i as f64 * 0.3).cos()).collect();
 
             let mut y_scalar = vec![0.0; n];
             let mut y_simd = vec![0.0; n];

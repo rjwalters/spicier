@@ -212,8 +212,9 @@ fn solve_dc_gmres(mna: &MnaSystem, config: &GmresConfig) -> Result<DVector<f64>>
     let size = mna.size();
 
     // Build sparse operator from triplets
-    let operator = SparseRealOperator::from_triplets(size, &mna.triplets)
-        .ok_or_else(|| crate::error::Error::SolverError("Failed to build sparse operator".into()))?;
+    let operator = SparseRealOperator::from_triplets(size, &mna.triplets).ok_or_else(|| {
+        crate::error::Error::SolverError("Failed to build sparse operator".into())
+    })?;
 
     // Build Jacobi preconditioner
     let preconditioner = JacobiPreconditioner::from_triplets(size, &mna.triplets);

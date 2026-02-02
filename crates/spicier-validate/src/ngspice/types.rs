@@ -207,20 +207,16 @@ impl NgspiceAc {
 
     /// Get magnitude in dB for a variable.
     pub fn magnitude_db(&self, name: &str) -> Option<Vec<f64>> {
-        self.values.get(name).map(|vals| {
-            vals.iter()
-                .map(|c| 20.0 * c.norm().log10())
-                .collect()
-        })
+        self.values
+            .get(name)
+            .map(|vals| vals.iter().map(|c| 20.0 * c.norm().log10()).collect())
     }
 
     /// Get phase in degrees for a variable.
     pub fn phase_deg(&self, name: &str) -> Option<Vec<f64>> {
-        self.values.get(name).map(|vals| {
-            vals.iter()
-                .map(|c| c.arg().to_degrees())
-                .collect()
-        })
+        self.values
+            .get(name)
+            .map(|vals| vals.iter().map(|c| c.arg().to_degrees()).collect())
     }
 }
 

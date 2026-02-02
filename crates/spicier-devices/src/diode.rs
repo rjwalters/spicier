@@ -286,7 +286,11 @@ mod tests {
         let ac_info = d.ac_info_at(&solution);
 
         match ac_info {
-            AcDeviceInfo::Diode { node_pos, node_neg, gd } => {
+            AcDeviceInfo::Diode {
+                node_pos,
+                node_neg,
+                gd,
+            } => {
                 assert_eq!(node_pos, Some(0));
                 assert_eq!(node_neg, None);
                 // At 0.7V, gd should be significant

@@ -19,7 +19,7 @@
 //! B4 out 0 I=I(V1)*0.5
 //! ```
 
-use crate::expression::{Expr, EvalContext};
+use crate::expression::{EvalContext, Expr};
 use crate::stamp::Stamp;
 use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
@@ -206,7 +206,11 @@ impl Stamp for BehavioralCurrentSource {
         // Current source stamp: current flows from n+ to n-
         let ctx = EvalContext::new();
         let current = self.expression.eval(&ctx);
-        mna.stamp_current_source(node_to_index(self.node_pos), node_to_index(self.node_neg), current);
+        mna.stamp_current_source(
+            node_to_index(self.node_pos),
+            node_to_index(self.node_neg),
+            current,
+        );
     }
 }
 
@@ -269,7 +273,11 @@ impl Stamper for BehavioralCurrentSource {
         let current = self.expression.eval(&ctx);
 
         // Stamp the current source
-        mna.stamp_current_source(node_to_index(self.node_pos), node_to_index(self.node_neg), current);
+        mna.stamp_current_source(
+            node_to_index(self.node_pos),
+            node_to_index(self.node_neg),
+            current,
+        );
 
         // Stamp the linearized conductances (Jacobian contributions)
         // For I = f(V), we need dI/dV contributions to the Jacobian
@@ -315,7 +323,11 @@ impl Stamper for BehavioralCurrentSource {
         ctx.set_time(time);
 
         let current = self.expression.eval(&ctx);
-        mna.stamp_current_source(node_to_index(self.node_pos), node_to_index(self.node_neg), current);
+        mna.stamp_current_source(
+            node_to_index(self.node_pos),
+            node_to_index(self.node_neg),
+            current,
+        );
     }
 }
 

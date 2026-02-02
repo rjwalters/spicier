@@ -13,7 +13,6 @@ pub use ac::compare_ac;
 pub use dc::compare_dc_op;
 pub use report::{ComparisonReport, ComparisonSummary, VariableComparison, WorstPointInfo};
 pub use tolerances::{
-    AcTolerances, ComparisonConfig, DcTolerances, TransientTolerances, relative_error,
-    values_match,
+    AcTolerances, ComparisonConfig, DcTolerances, TransientTolerances, relative_error, values_match,
 };
 pub use transient::compare_transient;

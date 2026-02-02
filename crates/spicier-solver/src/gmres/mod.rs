@@ -26,8 +26,8 @@ pub mod helpers;
 pub mod real;
 
 // Re-export main types and functions
-pub use complex::{solve_gmres, solve_gmres_preconditioned, GmresResult};
-pub use real::{solve_gmres_real, solve_gmres_real_preconditioned, RealGmresResult};
+pub use complex::{GmresResult, solve_gmres, solve_gmres_preconditioned};
+pub use real::{RealGmresResult, solve_gmres_real, solve_gmres_real_preconditioned};
 
 /// GMRES solver configuration.
 #[derive(Debug, Clone)]

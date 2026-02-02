@@ -253,7 +253,8 @@ impl<'a> Parser<'a> {
                         // Get the value
                         let voltage = self.expect_value(line)?;
 
-                        self.initial_conditions.push(InitialCondition { node, voltage });
+                        self.initial_conditions
+                            .push(InitialCondition { node, voltage });
                     } else {
                         return Err(Error::ParseError {
                             line,

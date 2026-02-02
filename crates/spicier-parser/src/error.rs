@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("parse error at line {line}: {message}")]
     ParseError { line: usize, message: String },

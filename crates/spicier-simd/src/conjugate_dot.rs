@@ -184,11 +184,7 @@ mod tests {
 
     #[test]
     fn conjugate_dot_self_is_real() {
-        let v = vec![
-            C64::new(1.0, 2.0),
-            C64::new(3.0, -1.0),
-            C64::new(0.5, 0.7),
-        ];
+        let v = vec![C64::new(1.0, 2.0), C64::new(3.0, -1.0), C64::new(0.5, 0.7)];
         let cap = SimdCapability::detect();
         let result = complex_conjugate_dot_product(&v, &v, cap);
 

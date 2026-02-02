@@ -8,6 +8,27 @@
 use crate::backend::ComputeBackend;
 use crate::gmres::GmresConfig;
 
+/// Configuration for GPU batched sweep operations.
+#[derive(Debug, Clone)]
+pub struct GpuBatchConfig {
+    /// Minimum batch size to use GPU (below this, CPU is used).
+    pub min_batch_size: usize,
+    /// Minimum matrix dimension to use GPU.
+    pub min_matrix_size: usize,
+    /// Maximum batch size per GPU launch (cuBLAS limit).
+    pub max_batch_per_launch: usize,
+}
+
+impl Default for GpuBatchConfig {
+    fn default() -> Self {
+        Self {
+            min_batch_size: 16,
+            min_matrix_size: 32,
+            max_batch_per_launch: 65535,
+        }
+    }
+}
+
 /// Solver dispatch configuration.
 ///
 /// Controls how the solver selects between different backends and algorithms
@@ -24,6 +45,8 @@ pub struct DispatchConfig {
     pub gmres_threshold: usize,
     /// GMRES configuration for iterative solving.
     pub gmres_config: GmresConfig,
+    /// GPU batch configuration for sweep operations.
+    pub gpu_batch_config: GpuBatchConfig,
 }
 
 impl Default for DispatchConfig {
@@ -31,9 +54,10 @@ impl Default for DispatchConfig {
         Self {
             backend: ComputeBackend::Cpu,
             strategy: SolverDispatchStrategy::Auto,
-            cpu_threshold: 1000,      // < 1k nodes: always CPU
-            gmres_threshold: 10_000,  // >= 10k nodes: prefer GMRES
+            cpu_threshold: 1000,     // < 1k nodes: always CPU
+            gmres_threshold: 10_000, // >= 10k nodes: prefer GMRES
             gmres_config: GmresConfig::default(),
+            gpu_batch_config: GpuBatchConfig::default(),
         }
     }
 }
@@ -106,6 +130,34 @@ impl DispatchConfig {
         }
     }
 
+    /// Decide whether to use GPU for batched sweep operations.
+    ///
+    /// Returns true if:
+    /// - A GPU backend is configured (CUDA or Metal)
+    /// - Matrix size is above `gpu_batch_config.min_matrix_size`
+    /// - Batch size is above `gpu_batch_config.min_batch_size`
+    pub fn use_gpu_batch(&self, matrix_size: usize, batch_size: usize) -> bool {
+        // Must have GPU backend
+        if matches!(self.backend, ComputeBackend::Cpu) {
+            return false;
+        }
+
+        // Check thresholds
+        matrix_size >= self.gpu_batch_config.min_matrix_size
+            && batch_size >= self.gpu_batch_config.min_batch_size
+    }
+
+    /// Get the GPU batch configuration.
+    pub fn gpu_batch_config(&self) -> &GpuBatchConfig {
+        &self.gpu_batch_config
+    }
+
+    /// Set the GPU batch configuration.
+    pub fn with_gpu_batch_config(mut self, config: GpuBatchConfig) -> Self {
+        self.gpu_batch_config = config;
+        self
+    }
+
     /// Get a human-readable description of the dispatch decision for a size.
     pub fn describe(&self, size: usize) -> String {
         let backend = if self.use_gpu(size) {
@@ -124,6 +176,7 @@ impl DispatchConfig {
 
 /// Solver strategy for dispatch decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum SolverDispatchStrategy {
     /// Automatically select based on system size.
     #[default]
@@ -178,8 +231,8 @@ mod tests {
         assert!(!cpu_config.use_gpu(5000));
 
         let cuda_config = DispatchConfig::cuda(0).with_cpu_threshold(1000);
-        assert!(!cuda_config.use_gpu(500));  // Below threshold
-        assert!(cuda_config.use_gpu(1500));  // Above threshold
+        assert!(!cuda_config.use_gpu(500)); // Below threshold
+        assert!(cuda_config.use_gpu(1500)); // Above threshold
     }
 
     #[test]
@@ -191,11 +244,15 @@ mod tests {
         assert!(config.use_gmres(15000));
 
         // Force direct LU
-        let lu_config = config.clone().with_strategy(SolverDispatchStrategy::DirectLU);
+        let lu_config = config
+            .clone()
+            .with_strategy(SolverDispatchStrategy::DirectLU);
         assert!(!lu_config.use_gmres(15000));
 
         // Force GMRES
-        let gmres_config = config.clone().with_strategy(SolverDispatchStrategy::IterativeGmres);
+        let gmres_config = config
+            .clone()
+            .with_strategy(SolverDispatchStrategy::IterativeGmres);
         assert!(gmres_config.use_gmres(500));
     }
 
@@ -230,5 +287,44 @@ mod tests {
             Some(SolverDispatchStrategy::IterativeGmres)
         );
         assert_eq!(SolverDispatchStrategy::from_name("invalid"), None);
+    }
+
+    #[test]
+    fn use_gpu_batch_decision() {
+        // CPU backend: never use GPU batch
+        let cpu_config = DispatchConfig::cpu();
+        assert!(!cpu_config.use_gpu_batch(64, 32));
+        assert!(!cpu_config.use_gpu_batch(100, 100));
+
+        // CUDA backend with default thresholds
+        let cuda_config = DispatchConfig::cuda(0);
+        // Default: min_matrix_size = 32, min_batch_size = 16
+
+        // Below both thresholds
+        assert!(!cuda_config.use_gpu_batch(16, 8));
+
+        // Matrix size OK, batch too small
+        assert!(!cuda_config.use_gpu_batch(64, 8));
+
+        // Batch OK, matrix too small
+        assert!(!cuda_config.use_gpu_batch(16, 32));
+
+        // Both OK
+        assert!(cuda_config.use_gpu_batch(64, 32));
+        assert!(cuda_config.use_gpu_batch(100, 100));
+    }
+
+    #[test]
+    fn custom_gpu_batch_config() {
+        let config = DispatchConfig::cuda(0).with_gpu_batch_config(GpuBatchConfig {
+            min_batch_size: 8,
+            min_matrix_size: 16,
+            max_batch_per_launch: 1000,
+        });
+
+        // Now lower thresholds
+        assert!(config.use_gpu_batch(16, 8));
+        assert!(!config.use_gpu_batch(15, 8));
+        assert!(!config.use_gpu_batch(16, 7));
     }
 }

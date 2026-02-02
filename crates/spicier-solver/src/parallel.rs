@@ -21,9 +21,8 @@ pub struct ParallelTripletAccumulator {
 impl ParallelTripletAccumulator {
     /// Create a new accumulator with the specified number of threads.
     pub fn new(num_threads: usize) -> Self {
-        let buffers: Vec<Vec<(usize, usize, f64)>> = (0..num_threads)
-            .map(|_| Vec::with_capacity(1024))
-            .collect();
+        let buffers: Vec<Vec<(usize, usize, f64)>> =
+            (0..num_threads).map(|_| Vec::with_capacity(1024)).collect();
         Self {
             buffers: Mutex::new(buffers),
             num_threads,
@@ -48,7 +47,10 @@ impl ParallelTripletAccumulator {
     /// # Safety
     /// Caller must ensure thread_id < num_threads and no concurrent access
     /// to the same thread_id.
-    pub fn get_buffer(&self, thread_id: usize) -> impl std::ops::DerefMut<Target = Vec<(usize, usize, f64)>> + '_ {
+    pub fn get_buffer(
+        &self,
+        thread_id: usize,
+    ) -> impl std::ops::DerefMut<Target = Vec<(usize, usize, f64)>> + '_ {
         struct BufferGuard<'a> {
             buffers: std::sync::MutexGuard<'a, Vec<Vec<(usize, usize, f64)>>>,
             thread_id: usize,

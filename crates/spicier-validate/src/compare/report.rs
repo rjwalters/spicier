@@ -128,7 +128,10 @@ impl ComparisonReport {
             "Comparison Report: {} Analysis\n",
             self.analysis_type
         ));
-        out.push_str(&format!("Status: {}\n", if self.passed { "PASS" } else { "FAIL" }));
+        out.push_str(&format!(
+            "Status: {}\n",
+            if self.passed { "PASS" } else { "FAIL" }
+        ));
         out.push_str(&format!(
             "Variables: {}/{} passed\n\n",
             self.summary.passed_variables, self.summary.total_variables

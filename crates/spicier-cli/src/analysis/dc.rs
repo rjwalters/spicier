@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use nalgebra::DVector;
-use spicier_core::mna::MnaSystem;
 use spicier_core::NodeId;
+use spicier_core::mna::MnaSystem;
 use spicier_parser::{DcSweepSpec, OutputVariable};
 use spicier_solver::{
     ConvergenceCriteria, DcSolution, DcSweepParams, solve_dc, solve_dc_sweep, solve_newton_raphson,

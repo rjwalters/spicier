@@ -5,12 +5,13 @@
 
 use crate::error::Result;
 use crate::gmres::{GmresConfig, RealGmresResult, solve_gmres_real};
-use crate::linear::{solve_sparse, SPARSE_THRESHOLD};
+use crate::linear::{SPARSE_THRESHOLD, solve_sparse};
 use crate::sparse_operator::SparseRealOperator;
 use nalgebra::DVector;
 
 /// Solver selection strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum SolverStrategy {
     /// Automatically select based on system size (default).
     #[default]
@@ -207,11 +208,26 @@ mod tests {
 
     #[test]
     fn test_solver_strategy_from_name() {
-        assert_eq!(SolverStrategy::from_name("auto"), Some(SolverStrategy::Auto));
-        assert_eq!(SolverStrategy::from_name("lu"), Some(SolverStrategy::DirectLU));
-        assert_eq!(SolverStrategy::from_name("direct"), Some(SolverStrategy::DirectLU));
-        assert_eq!(SolverStrategy::from_name("gmres"), Some(SolverStrategy::IterativeGmres));
-        assert_eq!(SolverStrategy::from_name("iterative"), Some(SolverStrategy::IterativeGmres));
+        assert_eq!(
+            SolverStrategy::from_name("auto"),
+            Some(SolverStrategy::Auto)
+        );
+        assert_eq!(
+            SolverStrategy::from_name("lu"),
+            Some(SolverStrategy::DirectLU)
+        );
+        assert_eq!(
+            SolverStrategy::from_name("direct"),
+            Some(SolverStrategy::DirectLU)
+        );
+        assert_eq!(
+            SolverStrategy::from_name("gmres"),
+            Some(SolverStrategy::IterativeGmres)
+        );
+        assert_eq!(
+            SolverStrategy::from_name("iterative"),
+            Some(SolverStrategy::IterativeGmres)
+        );
         assert_eq!(SolverStrategy::from_name("invalid"), None);
     }
 
@@ -219,7 +235,10 @@ mod tests {
     fn test_solver_strategy_display() {
         assert_eq!(format!("{}", SolverStrategy::Auto), "auto");
         assert_eq!(format!("{}", SolverStrategy::DirectLU), "direct (LU)");
-        assert_eq!(format!("{}", SolverStrategy::IterativeGmres), "iterative (GMRES)");
+        assert_eq!(
+            format!("{}", SolverStrategy::IterativeGmres),
+            "iterative (GMRES)"
+        );
     }
 
     #[test]
@@ -290,12 +309,7 @@ mod tests {
     #[test]
     fn test_solve_spd_system() {
         // 2x2 SPD system: [[4, 1], [1, 3]] * [1, 1] = [5, 4]
-        let triplets = vec![
-            (0, 0, 4.0),
-            (0, 1, 1.0),
-            (1, 0, 1.0),
-            (1, 1, 3.0),
-        ];
+        let triplets = vec![(0, 0, 4.0), (0, 1, 1.0), (1, 0, 1.0), (1, 1, 3.0)];
         let rhs = DVector::from_vec(vec![5.0, 4.0]);
 
         // Test with LU

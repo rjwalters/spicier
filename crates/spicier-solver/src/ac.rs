@@ -15,6 +15,7 @@ use crate::sparse_operator::SparseComplexOperator;
 
 /// AC sweep type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AcSweepType {
     /// Linear frequency spacing.
     Linear,
@@ -135,12 +136,7 @@ impl ComplexMna {
     }
 
     /// Stamp a real conductance between two nodes.
-    pub fn stamp_conductance(
-        &mut self,
-        node_i: Option<usize>,
-        node_j: Option<usize>,
-        g: f64,
-    ) {
+    pub fn stamp_conductance(&mut self, node_i: Option<usize>, node_j: Option<usize>, g: f64) {
         self.stamp_admittance(node_i, node_j, Complex::new(g, 0.0));
     }
 
@@ -474,8 +470,9 @@ fn solve_ac_gmres(mna: &ComplexMna, config: &GmresConfig) -> Result<DVector<Comp
         .map(|&(r, c, v)| (r, c, C64::new(v.re, v.im)))
         .collect();
 
-    let operator = SparseComplexOperator::from_triplets(size, &triplets_c64)
-        .ok_or_else(|| crate::error::Error::SolverError("Failed to build sparse operator".into()))?;
+    let operator = SparseComplexOperator::from_triplets(size, &triplets_c64).ok_or_else(|| {
+        crate::error::Error::SolverError("Failed to build sparse operator".into())
+    })?;
 
     // Build Jacobi preconditioner
     let preconditioner = ComplexJacobiPreconditioner::from_triplets(size, &triplets_c64);
@@ -526,12 +523,16 @@ mod tests {
                 let yc = Complex::new(0.0, omega * 1e-6);
                 mna.stamp_admittance(Some(1), None, yc);
             }
-            fn num_nodes(&self) -> usize { 2 }
-            fn num_vsources(&self) -> usize { 1 }
+            fn num_nodes(&self) -> usize {
+                2
+            }
+            fn num_vsources(&self) -> usize {
+                1
+            }
         }
 
         let params = AcParams {
-            fstart: 1.0,  // Well below f_3dB
+            fstart: 1.0, // Well below f_3dB
             fstop: 1000.0,
             num_points: 5,
             sweep_type: AcSweepType::Linear,
@@ -546,7 +547,8 @@ mod tests {
         assert!(
             mag_db[0].1.abs() < 0.1,
             "At f={} Hz, magnitude = {:.2} dB (expected ~0 dB)",
-            mag_db[0].0, mag_db[0].1
+            mag_db[0].0,
+            mag_db[0].1
         );
     }
 
@@ -703,10 +705,7 @@ mod tests {
 
         // At high frequency: should show -20 dB/decade rolloff
         // Compare magnitude at two points a decade apart in the rolloff region
-        let high_freq_points: Vec<_> = mag_db
-            .iter()
-            .filter(|&&(f, _)| f > f3db * 10.0)
-            .collect();
+        let high_freq_points: Vec<_> = mag_db.iter().filter(|&&(f, _)| f > f3db * 10.0).collect();
         if high_freq_points.len() >= 2 {
             let &(f1, db1) = high_freq_points[0];
             // Find a point approximately one decade higher

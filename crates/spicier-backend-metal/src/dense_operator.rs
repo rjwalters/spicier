@@ -642,9 +642,15 @@ mod tests {
         };
 
         let matrix = vec![
-            C64::new(1.0, 0.0), C64::new(1.0, 1.0), C64::new(1.0, 2.0),
-            C64::new(2.0, 0.0), C64::new(2.0, 1.0), C64::new(2.0, 2.0),
-            C64::new(3.0, 0.0), C64::new(3.0, 1.0), C64::new(3.0, 2.0),
+            C64::new(1.0, 0.0),
+            C64::new(1.0, 1.0),
+            C64::new(1.0, 2.0),
+            C64::new(2.0, 0.0),
+            C64::new(2.0, 1.0),
+            C64::new(2.0, 2.0),
+            C64::new(3.0, 0.0),
+            C64::new(3.0, 1.0),
+            C64::new(3.0, 2.0),
         ];
         let op = WgpuComplexDenseOperator::from_matrix(ctx, matrix, 3)
             .unwrap()
@@ -721,7 +727,10 @@ mod tests {
             assert!(
                 relative_error < 1e-4,
                 "Mismatch at {}: gpu={:?}, cpu={:?}, relative={}",
-                i, y_gpu[i], y_cpu[i], relative_error
+                i,
+                y_gpu[i],
+                y_cpu[i],
+                relative_error
             );
         }
     }
@@ -737,9 +746,7 @@ mod tests {
         };
 
         let n = 100;
-        let matrix: Vec<f64> = (0..n * n)
-            .map(|i| (i + 1) as f64 * 0.01)
-            .collect();
+        let matrix: Vec<f64> = (0..n * n).map(|i| (i + 1) as f64 * 0.01).collect();
 
         let op_gpu = WgpuRealDenseOperator::from_matrix(ctx.clone(), matrix.clone(), n)
             .unwrap()
@@ -763,7 +770,10 @@ mod tests {
             assert!(
                 relative_error < 1e-4,
                 "Mismatch at {}: gpu={}, cpu={}, relative={}",
-                i, y_gpu[i], y_cpu[i], relative_error
+                i,
+                y_gpu[i],
+                y_cpu[i],
+                relative_error
             );
         }
     }

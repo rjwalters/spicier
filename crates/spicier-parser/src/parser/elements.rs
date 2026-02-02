@@ -300,7 +300,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let mosfet = Mosfet::with_params(name, node_drain, node_gate, node_source, mos_type, params);
+        let mosfet =
+            Mosfet::with_params(name, node_drain, node_gate, node_source, mos_type, params);
         self.netlist.add_device(mosfet);
 
         self.skip_to_eol();
@@ -320,7 +321,15 @@ impl<'a> Parser<'a> {
         let current_index = self.next_current_index;
         self.next_current_index += 1;
 
-        let vcvs = Vcvs::new(name, out_pos, out_neg, ctrl_pos, ctrl_neg, gain, current_index);
+        let vcvs = Vcvs::new(
+            name,
+            out_pos,
+            out_neg,
+            ctrl_pos,
+            ctrl_neg,
+            gain,
+            current_index,
+        );
         self.netlist.add_device(vcvs);
 
         self.skip_to_eol();

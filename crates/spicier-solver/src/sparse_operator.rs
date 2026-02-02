@@ -195,10 +195,7 @@ mod tests {
 
     #[test]
     fn sparse_complex_identity() {
-        let triplets = vec![
-            (0, 0, C64::new(1.0, 0.0)),
-            (1, 1, C64::new(1.0, 0.0)),
-        ];
+        let triplets = vec![(0, 0, C64::new(1.0, 0.0)), (1, 1, C64::new(1.0, 0.0))];
         let op = SparseComplexOperator::from_triplets(2, &triplets).unwrap();
 
         assert_eq!(op.dim(), 2);
@@ -214,10 +211,7 @@ mod tests {
     #[test]
     fn sparse_complex_with_imaginary() {
         // Matrix: [[1+i, 0], [0, 2-i]]
-        let triplets = vec![
-            (0, 0, C64::new(1.0, 1.0)),
-            (1, 1, C64::new(2.0, -1.0)),
-        ];
+        let triplets = vec![(0, 0, C64::new(1.0, 1.0)), (1, 1, C64::new(2.0, -1.0))];
         let op = SparseComplexOperator::from_triplets(2, &triplets).unwrap();
 
         let x = vec![C64::new(1.0, 0.0), C64::new(0.0, 1.0)];
@@ -246,10 +240,7 @@ mod tests {
 
     #[test]
     fn sparse_complex_as_trait_object() {
-        let triplets = vec![
-            (0, 0, C64::new(2.0, 0.0)),
-            (1, 1, C64::new(3.0, 0.0)),
-        ];
+        let triplets = vec![(0, 0, C64::new(2.0, 0.0)), (1, 1, C64::new(3.0, 0.0))];
         let op = SparseComplexOperator::from_triplets(2, &triplets).unwrap();
         let op_ref: &dyn ComplexOperator = &op;
 

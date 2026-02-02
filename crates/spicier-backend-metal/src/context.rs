@@ -60,7 +60,9 @@ impl WgpuContext {
             log::info!("GPU supports f64 shader operations");
             wgpu::Features::SHADER_F64
         } else {
-            log::warn!("GPU does not support f64 shader operations, using f32 with potential precision loss");
+            log::warn!(
+                "GPU does not support f64 shader operations, using f32 with potential precision loss"
+            );
             wgpu::Features::empty()
         };
 

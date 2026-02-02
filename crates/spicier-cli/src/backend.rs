@@ -30,7 +30,9 @@ pub fn detect_backend(name: &str) -> ComputeBackend {
                         adapter_name: String::new(),
                     }
                 } else {
-                    eprintln!("Warning: Metal/WebGPU requested but not available, falling back to CPU");
+                    eprintln!(
+                        "Warning: Metal/WebGPU requested but not available, falling back to CPU"
+                    );
                     ComputeBackend::Cpu
                 }
             }

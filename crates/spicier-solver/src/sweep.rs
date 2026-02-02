@@ -33,9 +33,9 @@ impl ParameterVariation {
         Self {
             name: name.into(),
             nominal,
-            min: nominal * 0.9,  // Default ±10%
+            min: nominal * 0.9, // Default ±10%
             max: nominal * 1.1,
-            sigma: 0.05,        // Default 5% sigma
+            sigma: 0.05, // Default 5% sigma
         }
     }
 
@@ -218,13 +218,7 @@ impl SweepPointGenerator for CornerGenerator {
                 let parameters: Vec<f64> = variations
                     .iter()
                     .enumerate()
-                    .map(|(j, v)| {
-                        if (i >> j) & 1 == 0 {
-                            v.min
-                        } else {
-                            v.max
-                        }
-                    })
+                    .map(|(j, v)| if (i >> j) & 1 == 0 { v.min } else { v.max })
                     .collect();
                 SweepPoint { parameters }
             })
@@ -349,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_monte_carlo_generator() {
-        let generator =MonteCarloGenerator::new(100).with_seed(42);
+        let generator = MonteCarloGenerator::new(100).with_seed(42);
         let variations = vec![
             ParameterVariation::new("R1", 1000.0).with_sigma(0.1),
             ParameterVariation::new("R2", 2000.0).with_sigma(0.05),
@@ -372,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_corner_generator() {
-        let generator =CornerGenerator;
+        let generator = CornerGenerator;
         let variations = vec![
             ParameterVariation::new("R1", 1000.0).with_bounds(900.0, 1100.0),
             ParameterVariation::new("R2", 2000.0).with_bounds(1800.0, 2200.0),
@@ -402,10 +396,8 @@ mod tests {
 
     #[test]
     fn test_linear_sweep_generator() {
-        let generator =LinearSweepGenerator::new(5);
-        let variations = vec![
-            ParameterVariation::new("V1", 5.0).with_bounds(0.0, 10.0),
-        ];
+        let generator = LinearSweepGenerator::new(5);
+        let variations = vec![ParameterVariation::new("V1", 5.0).with_bounds(0.0, 10.0)];
 
         let points = generator.generate(&variations);
         assert_eq!(points.len(), 5);
@@ -491,8 +483,13 @@ mod tests {
             ParameterVariation::new("R1", 1000.0).with_bounds(500.0, 1500.0),
         ];
 
-        let result = solve_batched_sweep(&factory, &generator, &variations, &ConvergenceCriteria::default())
-            .expect("Sweep should succeed");
+        let result = solve_batched_sweep(
+            &factory,
+            &generator,
+            &variations,
+            &ConvergenceCriteria::default(),
+        )
+        .expect("Sweep should succeed");
 
         assert_eq!(result.total_count, 5);
         assert_eq!(result.converged_count, 5);
@@ -504,6 +501,10 @@ mod tests {
 
         // At midpoint R1 = R2 = 1000, V(1) should be 5V (voltage divider)
         let v1_mid = result.solutions[2][1];
-        assert!((v1_mid - 5.0).abs() < 0.01, "V(1) = {} at R1=R2 (expected 5V)", v1_mid);
+        assert!(
+            (v1_mid - 5.0).abs() < 0.01,
+            "V(1) = {} at R1=R2 (expected 5V)",
+            v1_mid
+        );
     }
 }

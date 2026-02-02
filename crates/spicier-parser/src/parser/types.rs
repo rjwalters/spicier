@@ -6,6 +6,7 @@ use spicier_core::{Netlist, NodeId};
 
 /// AC sweep type parsed from netlist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AcSweepType {
     /// Linear frequency spacing.
     Lin,
@@ -30,6 +31,7 @@ pub struct DcSweepSpec {
 
 /// An analysis command parsed from the netlist.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AnalysisCommand {
     /// DC operating point (.OP).
     Op,
@@ -69,6 +71,7 @@ pub struct InitialCondition {
 
 /// Type of analysis for .PRINT command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PrintAnalysisType {
     /// DC operating point or DC sweep.
     Dc,
@@ -80,12 +83,10 @@ pub enum PrintAnalysisType {
 
 /// An output variable specification from .PRINT command.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum OutputVariable {
     /// Node voltage: V(node) or V(node1, node2) for differential.
-    Voltage {
-        node: String,
-        node2: Option<String>,
-    },
+    Voltage { node: String, node2: Option<String> },
     /// Device current: I(device).
     Current { device: String },
     /// Real part of voltage (AC): VR(node).

@@ -1,9 +1,9 @@
 //! End-to-end tests: parse netlist, simulate, verify results.
 
 use nalgebra::DVector;
+use spicier_core::NodeId;
 use spicier_core::mna::MnaSystem;
 use spicier_core::netlist::TransientDeviceInfo;
-use spicier_core::NodeId;
 use spicier_parser::{AnalysisCommand, parse, parse_full};
 use spicier_solver::{
     CapacitorState, ConvergenceCriteria, DcSweepParams, DcSweepStamper, IntegrationMethod,
@@ -339,11 +339,7 @@ E1 3 0 1 2 2.0
     let v3 = solution.voltage(NodeId::new(3));
 
     // V(1) = 10V
-    assert!(
-        (v1 - 10.0).abs() < 1e-6,
-        "V(1) = {} (expected 10.0)",
-        v1
-    );
+    assert!((v1 - 10.0).abs() < 1e-6, "V(1) = {} (expected 10.0)", v1);
 
     // V(3) = 2 * (V(1) - V(2))
     let expected_v3 = 2.0 * (v1 - v2);
@@ -378,11 +374,7 @@ G1 2 0 1 0 0.001
     // G1 injects gm * V(1) = 0.001 * 2 = 2mA into node 2
     // V(2) = 2mA * 1k = 2V
     let v2 = solution.voltage(NodeId::new(2));
-    assert!(
-        (v2 - 2.0).abs() < 1e-6,
-        "V(2) = {} (expected 2.0)",
-        v2
-    );
+    assert!((v2 - 2.0).abs() < 1e-6, "V(2) = {} (expected 2.0)", v2);
 }
 
 // ────────────────────── Transient tests ──────────────────────
@@ -413,7 +405,7 @@ C1 2 0 1u
                 caps.push(CapacitorState::new(capacitance, node_pos, node_neg));
             }
             TransientDeviceInfo::Inductor { .. } => {}
-            TransientDeviceInfo::None => {}
+            TransientDeviceInfo::None | _ => {}
         }
     }
     assert_eq!(caps.len(), 1);

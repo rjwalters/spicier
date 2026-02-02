@@ -52,9 +52,9 @@ fn parse_header(data: &str) -> Result<RawfileHeader> {
             flags = line.strip_prefix("Flags:").unwrap().trim().to_string();
         } else if line.starts_with("No. Variables:") {
             let val = line.strip_prefix("No. Variables:").unwrap().trim();
-            num_variables = val.parse().map_err(|_| {
-                Error::RawfileParseError(format!("invalid No. Variables: {}", val))
-            })?;
+            num_variables = val
+                .parse()
+                .map_err(|_| Error::RawfileParseError(format!("invalid No. Variables: {}", val)))?;
         } else if line.starts_with("No. Points:") {
             let val = line.strip_prefix("No. Points:").unwrap().trim();
             num_points = val

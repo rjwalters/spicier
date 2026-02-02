@@ -1,7 +1,7 @@
 //! Helper functions for GMRES solver.
 
 use num_complex::Complex64 as C64;
-use spicier_simd::{complex_conjugate_dot_product, real_dot_product, SimdCapability};
+use spicier_simd::{SimdCapability, complex_conjugate_dot_product, real_dot_product};
 
 /// Compute the 2-norm of a complex vector using SIMD-accelerated dot product.
 pub fn complex_vec_norm(v: &[C64], cap: SimdCapability) -> f64 {

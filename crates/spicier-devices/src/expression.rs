@@ -11,6 +11,7 @@ use std::f64::consts::{E, PI};
 
 /// Expression AST node.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Expr {
     /// Numeric constant.
     Constant(f64),
@@ -37,6 +38,7 @@ pub enum Expr {
 
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -47,6 +49,7 @@ pub enum BinaryOp {
 
 /// Unary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UnaryOp {
     Neg,
 }
@@ -90,16 +93,22 @@ impl Expr {
         match self {
             Expr::Constant(v) => *v,
             Expr::Voltage { node_pos, node_neg } => {
-                let v_pos = ctx.voltages.get(&node_pos.to_uppercase()).copied().unwrap_or(0.0);
+                let v_pos = ctx
+                    .voltages
+                    .get(&node_pos.to_uppercase())
+                    .copied()
+                    .unwrap_or(0.0);
                 let v_neg = node_neg
                     .as_ref()
                     .map(|n| ctx.voltages.get(&n.to_uppercase()).copied().unwrap_or(0.0))
                     .unwrap_or(0.0);
                 v_pos - v_neg
             }
-            Expr::Current { source_name } => {
-                ctx.currents.get(&source_name.to_uppercase()).copied().unwrap_or(0.0)
-            }
+            Expr::Current { source_name } => ctx
+                .currents
+                .get(&source_name.to_uppercase())
+                .copied()
+                .unwrap_or(0.0),
             Expr::Time => ctx.time,
             Expr::BinaryOp { op, left, right } => {
                 let l = left.eval(ctx);
@@ -188,9 +197,7 @@ impl Expr {
                     UnaryOp::Neg => -d,
                 }
             }
-            Expr::Function { name, args } => {
-                derivative_function(name, args, node, ctx)
-            }
+            Expr::Function { name, args } => derivative_function(name, args, node, ctx),
         }
     }
 
@@ -243,9 +250,7 @@ impl Expr {
                     UnaryOp::Neg => -d,
                 }
             }
-            Expr::Function { name, args } => {
-                derivative_function_current(name, args, source, ctx)
-            }
+            Expr::Function { name, args } => derivative_function_current(name, args, source, ctx),
         }
     }
 
@@ -273,9 +278,7 @@ impl Expr {
                 let left_has_var = left.has_voltage_or_current();
                 let right_has_var = right.has_voltage_or_current();
                 match op {
-                    BinaryOp::Add | BinaryOp::Sub => {
-                        left.is_nonlinear() || right.is_nonlinear()
-                    }
+                    BinaryOp::Add | BinaryOp::Sub => left.is_nonlinear() || right.is_nonlinear(),
                     BinaryOp::Mul => {
                         // Nonlinear if both sides have variables, or if either is nonlinear
                         (left_has_var && right_has_var)
@@ -295,7 +298,8 @@ impl Expr {
             Expr::UnaryOp { operand, .. } => operand.is_nonlinear(),
             Expr::Function { args, .. } => {
                 // Functions of voltages/currents are nonlinear
-                args.iter().any(|a| a.has_voltage_or_current() || a.is_nonlinear())
+                args.iter()
+                    .any(|a| a.has_voltage_or_current() || a.is_nonlinear())
             }
         }
     }
@@ -421,7 +425,13 @@ fn eval_function(name: &str, args: &[f64]) -> f64 {
         "ABS" => args.first().copied().unwrap_or(0.0).abs(),
         "SGN" | "SIGN" => {
             let x = args.first().copied().unwrap_or(0.0);
-            if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }
+            if x > 0.0 {
+                1.0
+            } else if x < 0.0 {
+                -1.0
+            } else {
+                0.0
+            }
         }
 
         // Min/max
@@ -496,9 +506,21 @@ fn derivative_function(name: &str, args: &[Expr], node: &str, ctx: &EvalContext)
             "LOG" | "LN" => 1.0 / g,
             "LOG10" => 1.0 / (g * 10.0_f64.ln()),
             "SQRT" => 0.5 / g.sqrt(),
-            "ABS" => if g >= 0.0 { 1.0 } else { -1.0 },
+            "ABS" => {
+                if g >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
             "U" | "STEP" => 0.0, // Discontinuous
-            "URAMP" => if g >= 0.0 { 1.0 } else { 0.0 },
+            "URAMP" => {
+                if g >= 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             "FLOOR" | "CEIL" | "ROUND" => 0.0, // Discontinuous
             _ => 0.0,
         };
@@ -547,9 +569,17 @@ fn derivative_function(name: &str, args: &[Expr], node: &str, ctx: &EvalContext)
             }
             let values: Vec<f64> = args.iter().map(|a| a.eval(ctx)).collect();
             let (idx, _) = if name_upper == "MIN" {
-                values.iter().enumerate().min_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap()
+                values
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    .unwrap()
             } else {
-                values.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap()
+                values
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    .unwrap()
             };
             args[idx].derivative_voltage(node, ctx)
         }
@@ -603,7 +633,13 @@ fn derivative_function_current(name: &str, args: &[Expr], source: &str, ctx: &Ev
             "EXP" => g.exp(),
             "LOG" | "LN" => 1.0 / g,
             "SQRT" => 0.5 / g.sqrt(),
-            "ABS" => if g >= 0.0 { 1.0 } else { -1.0 },
+            "ABS" => {
+                if g >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
             _ => 0.0,
         };
 
@@ -829,7 +865,9 @@ impl<'a> ExprParser<'a> {
         let suffix = &self.input[suffix_start..self.pos];
         let multiplier = parse_spice_suffix(suffix);
 
-        let value: f64 = num_str.parse().map_err(|_| format!("Invalid number: {}", num_str))?;
+        let value: f64 = num_str
+            .parse()
+            .map_err(|_| format!("Invalid number: {}", num_str))?;
         Ok(Expr::Constant(value * multiplier))
     }
 
@@ -1156,7 +1194,11 @@ mod tests {
     fn test_is_time_dependent() {
         assert!(!parse_expression("V(1)").unwrap().is_time_dependent());
         assert!(parse_expression("time").unwrap().is_time_dependent());
-        assert!(parse_expression("sin(2 * pi * 1k * time)").unwrap().is_time_dependent());
+        assert!(
+            parse_expression("sin(2 * pi * 1k * time)")
+                .unwrap()
+                .is_time_dependent()
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub type BoxedStamper = Box<dyn Stamper>;
 
 /// Information about a device for AC analysis stamping.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AcDeviceInfo {
     /// Resistor: stamp real conductance G.
     Resistor {
@@ -98,6 +99,7 @@ pub enum AcDeviceInfo {
 
 /// Information about a device for transient analysis.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TransientDeviceInfo {
     /// Capacitor with node indices and capacitance.
     Capacitor {

@@ -4,6 +4,7 @@ use crate::error::{Error, Result};
 
 /// Token types for SPICE netlists.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Token {
     /// Element name (R1, C1, V1, etc.)
     Name(String),

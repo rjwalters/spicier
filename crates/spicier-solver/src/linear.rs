@@ -37,8 +37,9 @@ impl CachedSparseLu {
             .map(|&(r, c, v)| Triplet::new(r, c, v))
             .collect();
 
-        let sparse_mat = SparseColMat::<usize, f64>::try_new_from_triplets(size, size, &faer_triplets)
-            .map_err(|_| Error::SingularMatrix)?;
+        let sparse_mat =
+            SparseColMat::<usize, f64>::try_new_from_triplets(size, size, &faer_triplets)
+                .map_err(|_| Error::SingularMatrix)?;
 
         // Compute symbolic factorization
         let symbolic = SymbolicLu::try_new(sparse_mat.symbolic())
@@ -59,7 +60,11 @@ impl CachedSparseLu {
     /// Solve Ax = b using the cached symbolic factorization.
     ///
     /// Only numeric factorization is performed, reusing the cached elimination tree.
-    pub fn solve(&self, triplets: &[(usize, usize, f64)], rhs: &DVector<f64>) -> Result<DVector<f64>> {
+    pub fn solve(
+        &self,
+        triplets: &[(usize, usize, f64)],
+        rhs: &DVector<f64>,
+    ) -> Result<DVector<f64>> {
         if self.size != rhs.len() {
             return Err(Error::DimensionMismatch {
                 expected: self.size,
@@ -224,12 +229,8 @@ pub fn solve_sparse(
         .map(|&(r, c, v)| Triplet::new(r, c, v))
         .collect();
 
-    let sparse_mat = SparseColMat::<usize, f64>::try_new_from_triplets(
-        size,
-        size,
-        &faer_triplets,
-    )
-    .map_err(|_| Error::SingularMatrix)?;
+    let sparse_mat = SparseColMat::<usize, f64>::try_new_from_triplets(size, size, &faer_triplets)
+        .map_err(|_| Error::SingularMatrix)?;
 
     let lu = sparse_mat.sp_lu().map_err(|_| Error::SingularMatrix)?;
 
@@ -261,12 +262,8 @@ pub fn solve_sparse_complex(
         .map(|&(r, c, v)| Triplet::new(r, c, c64::new(v.re, v.im)))
         .collect();
 
-    let sparse_mat = SparseColMat::<usize, c64>::try_new_from_triplets(
-        size,
-        size,
-        &faer_triplets,
-    )
-    .map_err(|_| Error::SingularMatrix)?;
+    let sparse_mat = SparseColMat::<usize, c64>::try_new_from_triplets(size, size, &faer_triplets)
+        .map_err(|_| Error::SingularMatrix)?;
 
     let lu = sparse_mat.sp_lu().map_err(|_| Error::SingularMatrix)?;
 
@@ -324,12 +321,7 @@ mod tests {
         // 2x + y = 5
         // x + 3y = 6
         // Solution: x = 1.8, y = 1.4
-        let triplets = vec![
-            (0, 0, 2.0),
-            (0, 1, 1.0),
-            (1, 0, 1.0),
-            (1, 1, 3.0),
-        ];
+        let triplets = vec![(0, 0, 2.0), (0, 1, 1.0), (1, 0, 1.0), (1, 1, 3.0)];
         let b = dvector![5.0, 6.0];
 
         let x = solve_sparse(2, &triplets, &b).unwrap();
@@ -356,8 +348,14 @@ mod tests {
         let ax0 = Complex::new(2.0, 1.0) * x[0] + Complex::new(1.0, 0.0) * x[1];
         let ax1 = Complex::new(1.0, 0.0) * x[0] + Complex::new(3.0, -1.0) * x[1];
 
-        assert!((ax0 - Complex::new(5.0, 1.0)).norm() < 1e-10, "Ax[0] mismatch");
-        assert!((ax1 - Complex::new(6.0, 0.0)).norm() < 1e-10, "Ax[1] mismatch");
+        assert!(
+            (ax0 - Complex::new(5.0, 1.0)).norm() < 1e-10,
+            "Ax[0] mismatch"
+        );
+        assert!(
+            (ax1 - Complex::new(6.0, 0.0)).norm() < 1e-10,
+            "Ax[1] mismatch"
+        );
     }
 
     #[test]
@@ -434,12 +432,7 @@ mod tests {
     #[test]
     fn test_cached_sparse_lu_simple() {
         // Same system as test_solve_sparse_simple
-        let triplets = vec![
-            (0, 0, 2.0),
-            (0, 1, 1.0),
-            (1, 0, 1.0),
-            (1, 1, 3.0),
-        ];
+        let triplets = vec![(0, 0, 2.0), (0, 1, 1.0), (1, 0, 1.0), (1, 1, 3.0)];
         let b = dvector![5.0, 6.0];
 
         let cached = CachedSparseLu::new(2, &triplets).unwrap();
@@ -452,12 +445,7 @@ mod tests {
     #[test]
     fn test_cached_sparse_lu_reuse() {
         // Create cached solver with initial sparsity pattern
-        let triplets1 = vec![
-            (0, 0, 2.0),
-            (0, 1, 1.0),
-            (1, 0, 1.0),
-            (1, 1, 3.0),
-        ];
+        let triplets1 = vec![(0, 0, 2.0), (0, 1, 1.0), (1, 0, 1.0), (1, 1, 3.0)];
         let b1 = dvector![5.0, 6.0];
 
         let cached = CachedSparseLu::new(2, &triplets1).unwrap();
@@ -469,17 +457,25 @@ mod tests {
 
         // Second solve with different values but same sparsity pattern
         let triplets2 = vec![
-            (0, 0, 4.0),  // changed
+            (0, 0, 4.0), // changed
             (0, 1, 1.0),
             (1, 0, 1.0),
-            (1, 1, 4.0),  // changed
+            (1, 1, 4.0), // changed
         ];
         let b2 = dvector![10.0, 10.0];
 
         // A = [[4,1],[1,4]], b = [10,10] → x = [2,2]
         let x2 = cached.solve(&triplets2, &b2).unwrap();
-        assert!((x2[0] - 2.0).abs() < 1e-10, "x2[0] = {} (expected 2.0)", x2[0]);
-        assert!((x2[1] - 2.0).abs() < 1e-10, "x2[1] = {} (expected 2.0)", x2[1]);
+        assert!(
+            (x2[0] - 2.0).abs() < 1e-10,
+            "x2[0] = {} (expected 2.0)",
+            x2[0]
+        );
+        assert!(
+            (x2[1] - 2.0).abs() < 1e-10,
+            "x2[1] = {} (expected 2.0)",
+            x2[1]
+        );
     }
 
     #[test]
@@ -534,8 +530,14 @@ mod tests {
         let ax0 = Complex::new(2.0, 1.0) * x[0] + Complex::new(1.0, 0.0) * x[1];
         let ax1 = Complex::new(1.0, 0.0) * x[0] + Complex::new(3.0, -1.0) * x[1];
 
-        assert!((ax0 - Complex::new(5.0, 1.0)).norm() < 1e-10, "Ax[0] mismatch");
-        assert!((ax1 - Complex::new(6.0, 0.0)).norm() < 1e-10, "Ax[1] mismatch");
+        assert!(
+            (ax0 - Complex::new(5.0, 1.0)).norm() < 1e-10,
+            "Ax[0] mismatch"
+        );
+        assert!(
+            (ax1 - Complex::new(6.0, 0.0)).norm() < 1e-10,
+            "Ax[1] mismatch"
+        );
     }
 
     #[test]

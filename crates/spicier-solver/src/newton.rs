@@ -591,11 +591,7 @@ mod tests {
 
             // Stamp diode at node 1 to ground
             let vd = solution[1];
-            let vd_limited = if vd > 0.8 {
-                0.8 + (vd - 0.8) * 0.1
-            } else {
-                vd
-            };
+            let vd_limited = if vd > 0.8 { 0.8 + (vd - 0.8) * 0.1 } else { vd };
             let exp_term = (vd_limited / self.nvt).exp();
             let id = self.is * (exp_term - 1.0);
             let gd = (self.is * exp_term / self.nvt).max(1e-12);

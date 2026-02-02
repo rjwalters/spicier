@@ -26,7 +26,7 @@ pub fn run_ac_analysis(
     let type_name = match sweep_type {
         AcSweepType::Dec => "DEC",
         AcSweepType::Oct => "OCT",
-        AcSweepType::Lin => "LIN",
+        AcSweepType::Lin | _ => "LIN",
     };
 
     println!(
@@ -75,7 +75,7 @@ pub fn run_ac_analysis(
     let solver_sweep_type = match sweep_type {
         AcSweepType::Dec => SolverAcSweepType::Decade,
         AcSweepType::Oct => SolverAcSweepType::Octave,
-        AcSweepType::Lin => SolverAcSweepType::Linear,
+        AcSweepType::Lin | _ => SolverAcSweepType::Linear,
     };
 
     let stamper = NetlistAcStamper {
@@ -90,8 +90,7 @@ pub fn run_ac_analysis(
         sweep_type: solver_sweep_type,
     };
 
-    let result =
-        solve_ac(&stamper, &params).map_err(|e| anyhow::anyhow!("Solver error: {}", e))?;
+    let result = solve_ac(&stamper, &params).map_err(|e| anyhow::anyhow!("Solver error: {}", e))?;
 
     // Print header
     print!("{:>14}", "Freq(Hz)");

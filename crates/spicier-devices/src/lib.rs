@@ -19,9 +19,9 @@ pub mod sources;
 pub mod stamp;
 pub mod waveforms;
 
-pub use batch::{BatchMosfetType, DiodeBatch, MosfetBatch, round_up_to_simd, SIMD_LANES_AVX2};
+pub use batch::{BatchMosfetType, DiodeBatch, MosfetBatch, SIMD_LANES_AVX2, round_up_to_simd};
 pub use behavioral::{BehavioralCurrentSource, BehavioralVoltageSource};
 pub use error::{Error, Result};
-pub use expression::{Expr, EvalContext, parse_expression};
+pub use expression::{EvalContext, Expr, parse_expression};
 pub use stamp::Stamp;
 pub use waveforms::Waveform;

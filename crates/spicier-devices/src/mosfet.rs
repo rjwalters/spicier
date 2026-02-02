@@ -9,6 +9,7 @@ use crate::stamp::Stamp;
 
 /// MOSFET type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MosfetType {
     Nmos,
     Pmos,
@@ -64,6 +65,7 @@ impl MosfetParams {
 
 /// Operating region of the MOSFET.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MosfetRegion {
     Cutoff,
     Linear,
@@ -404,7 +406,13 @@ mod tests {
         let ac_info = m.ac_info_at(&solution);
 
         match ac_info {
-            AcDeviceInfo::Mosfet { drain, gate, source, gds, gm } => {
+            AcDeviceInfo::Mosfet {
+                drain,
+                gate,
+                source,
+                gds,
+                gm,
+            } => {
                 assert_eq!(drain, Some(0));
                 assert_eq!(gate, Some(1));
                 assert_eq!(source, None);

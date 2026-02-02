@@ -13,7 +13,7 @@ use crate::sparse_operator::SparseRealOperator;
 
 use super::companion::{CapacitorState, InductorState};
 use super::result::{AdaptiveTransientResult, TimePoint, TransientResult};
-use super::types::{AdaptiveTransientParams, IntegrationMethod, TransientParams, TRBDF2_GAMMA};
+use super::types::{AdaptiveTransientParams, IntegrationMethod, TRBDF2_GAMMA, TransientParams};
 
 /// Callback for stamping the circuit at each transient timestep.
 pub trait TransientStamper {
@@ -299,24 +299,23 @@ pub fn solve_transient_dispatched(
         stamper.stamp_at_time(&mut mna, t);
 
         // Helper closure for solving
-        let solve_mna = |mna: &MnaSystem,
-                         cached: &mut Option<CachedSparseLu>|
-         -> Result<DVector<f64>> {
-            if use_gmres {
-                solve_transient_gmres(mna, &config.gmres_config)
-            } else if mna_size >= SPARSE_THRESHOLD {
-                let solver = match cached.as_ref() {
-                    Some(s) => s,
-                    None => {
-                        *cached = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
-                        cached.as_ref().unwrap()
-                    }
-                };
-                solver.solve(&mna.triplets, mna.rhs())
-            } else {
-                solve_dense(&mna.to_dense_matrix(), mna.rhs())
-            }
-        };
+        let solve_mna =
+            |mna: &MnaSystem, cached: &mut Option<CachedSparseLu>| -> Result<DVector<f64>> {
+                if use_gmres {
+                    solve_transient_gmres(mna, &config.gmres_config)
+                } else if mna_size >= SPARSE_THRESHOLD {
+                    let solver = match cached.as_ref() {
+                        Some(s) => s,
+                        None => {
+                            *cached = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
+                            cached.as_ref().unwrap()
+                        }
+                    };
+                    solver.solve(&mna.triplets, mna.rhs())
+                } else {
+                    solve_dense(&mna.to_dense_matrix(), mna.rhs())
+                }
+            };
 
         match params.method {
             IntegrationMethod::BackwardEuler => {
@@ -411,8 +410,9 @@ pub fn solve_transient_dispatched(
 fn solve_transient_gmres(mna: &MnaSystem, config: &GmresConfig) -> Result<DVector<f64>> {
     let size = mna.size();
 
-    let operator = SparseRealOperator::from_triplets(size, &mna.triplets)
-        .ok_or_else(|| crate::error::Error::SolverError("Failed to build sparse operator".into()))?;
+    let operator = SparseRealOperator::from_triplets(size, &mna.triplets).ok_or_else(|| {
+        crate::error::Error::SolverError("Failed to build sparse operator".into())
+    })?;
 
     let preconditioner = JacobiPreconditioner::from_triplets(size, &mna.triplets);
     let rhs: Vec<f64> = mna.rhs().iter().copied().collect();
