@@ -1,9 +1,52 @@
 //! SIMD-accelerated complex dot product and matrix-vector multiplication.
 //!
 //! Computes `sum(a[i] * b[i])` — the non-conjugate complex dot product.
+//!
+//! On macOS with the `accelerate` feature, uses Apple's Accelerate framework
+//! for optimized complex BLAS operations.
 
 use crate::capability::SimdCapability;
 use num_complex::Complex64 as C64;
+
+// ============================================================================
+// Apple Accelerate FFI Bindings
+// ============================================================================
+
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+#[link(name = "Accelerate", kind = "framework")]
+unsafe extern "C" {
+    /// BLAS zdotu: Compute unconjugated complex dot product.
+    /// Returns: sum(x[i] * y[i]) for i in 0..n (no conjugation)
+    fn cblas_zdotu_sub(
+        n: i32,
+        x: *const C64,
+        incx: i32,
+        y: *const C64,
+        incy: i32,
+        result: *mut C64,
+    );
+
+    /// BLAS zgemv: Complex matrix-vector multiply y = alpha*A*x + beta*y
+    fn cblas_zgemv(
+        order: i32,
+        trans: i32,
+        m: i32,
+        n: i32,
+        alpha: *const C64,
+        a: *const C64,
+        lda: i32,
+        x: *const C64,
+        incx: i32,
+        beta: *const C64,
+        y: *mut C64,
+        incy: i32,
+    );
+}
+
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+const CBLAS_ROW_MAJOR: i32 = 101;
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+const CBLAS_NO_TRANS: i32 = 111;
 
 /// Compute complex dot product: `sum(a[i] * b[i])` for i in 0..n.
 ///
@@ -22,7 +65,7 @@ pub fn complex_dot_product(a: &[C64], b: &[C64], capability: SimdCapability) -> 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         SimdCapability::Avx2 => unsafe { complex_dot_avx2(a, b) },
         #[cfg(all(target_os = "macos", feature = "accelerate"))]
-        SimdCapability::Accelerate => complex_dot_scalar(a, b), // TODO: implement with vDSP
+        SimdCapability::Accelerate => complex_dot_accelerate(a, b),
         SimdCapability::Scalar => complex_dot_scalar(a, b),
     }
 }
@@ -35,6 +78,54 @@ pub fn complex_dot_scalar(a: &[C64], b: &[C64]) -> C64 {
         sum += ai * bi;
     }
     sum
+}
+
+/// Apple Accelerate implementation of complex dot product (unconjugated).
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+#[inline]
+pub fn complex_dot_accelerate(a: &[C64], b: &[C64]) -> C64 {
+    if a.is_empty() {
+        return C64::new(0.0, 0.0);
+    }
+    let mut result = C64::new(0.0, 0.0);
+    unsafe {
+        cblas_zdotu_sub(
+            a.len() as i32,
+            a.as_ptr(),
+            1,
+            b.as_ptr(),
+            1,
+            &mut result,
+        );
+    }
+    result
+}
+
+/// Apple Accelerate implementation of complex matrix-vector product.
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+#[inline]
+pub fn complex_matvec_accelerate(matrix: &[C64], n: usize, x: &[C64], y: &mut [C64]) {
+    if n == 0 {
+        return;
+    }
+    let alpha = C64::new(1.0, 0.0);
+    let beta = C64::new(0.0, 0.0);
+    unsafe {
+        cblas_zgemv(
+            CBLAS_ROW_MAJOR,
+            CBLAS_NO_TRANS,
+            n as i32,
+            n as i32,
+            &alpha,
+            matrix.as_ptr(),
+            n as i32,
+            x.as_ptr(),
+            1,
+            &beta,
+            y.as_mut_ptr(),
+            1,
+        );
+    }
 }
 
 /// Compute complex matrix-vector product: y = A * x
@@ -55,6 +146,12 @@ pub fn complex_matvec(
     assert_eq!(matrix.len(), n * n, "Matrix size mismatch");
     assert_eq!(x.len(), n, "Input vector size mismatch");
     assert_eq!(y.len(), n, "Output vector size mismatch");
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    if matches!(capability, SimdCapability::Accelerate) {
+        complex_matvec_accelerate(matrix, n, x, y);
+        return;
+    }
 
     for (i, yi) in y.iter_mut().enumerate() {
         let row_start = i * n;

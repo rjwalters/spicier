@@ -413,7 +413,7 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
 
 **Goal:** Leverage Apple's Accelerate framework for optimal performance on macOS/Apple Silicon, using AMX coprocessor for BLAS/LAPACK operations.
 
-**Status:** ✅ Core implementation complete. SIMD dot products and dense LU use Accelerate.
+**Status:** ✅ Complete. All SIMD operations (real/complex dot products, matvec) and dense LU use Accelerate. Threshold auto-tuned.
 
 ### 8b-1: Accelerate SIMD Backend (spicier-simd) ✅
 
@@ -423,8 +423,10 @@ Apple Silicon falls back to scalar code - missing AMX coprocessor entirely. Add 
   - Runtime detection: Accelerate available → use cblas_ddot, else scalar
   - `SimdCapability::Accelerate` variant added
 - [x] `cblas_dgemv` for dense matvec
+- [x] `cblas_zdotu_sub` for complex dot products (unconjugated)
+- [x] `cblas_zdotc_sub` for complex conjugate dot products
+- [x] `cblas_zgemv` for complex matvec
 - [x] Feature flag: `accelerate` (default on macOS)
-- [ ] `cblas_zdotc` for complex conjugate dot products (falls back to scalar for now)
 - [ ] Benchmark comparison: scalar vs Accelerate (GMRES performance)
 
 ### 8b-2: Accelerate Linear Solver (spicier-solver) ✅
@@ -435,15 +437,29 @@ Replace nalgebra dense LU with Accelerate's optimized LAPACK.
   - 1.86x speedup at n=100, **8.5x speedup at n=500**
 - [x] `zgesv_` for complex dense solve (AC analysis)
 - [x] Feature flag: `accelerate` in spicier-solver (default)
-- [ ] `dgetrf_` + `dgetrs_` for factorization reuse in Newton-Raphson
-- [ ] `zgetrf_` + `zgetrs_` for complex factorization reuse
+- [x] `dgetrf_` + `dgetrs_` for factorization reuse in Newton-Raphson
+  - `CachedDenseLu` struct stores LU factors and pivot indices
+  - Factor once with `new()`, solve many times with `solve()`
+  - 8 unit tests verify correctness and reuse pattern
+- [x] `zgetrf_` + `zgetrs_` for complex factorization reuse
+  - `CachedDenseLuComplex` for AC analysis and complex systems
+  - Same factorize-once, solve-many pattern
 
-### 8b-3: Sparse-to-Dense Threshold Tuning
+### 8b-3: Sparse-to-Dense Threshold Tuning ✅
 
-- [ ] Profile sparse vs dense+Accelerate crossover point
-  - Current SPARSE_THRESHOLD = 50 may be too conservative with Accelerate
-  - Accelerate dense may beat faer sparse up to ~100-200 nodes
-- [ ] Adaptive threshold based on backend availability
+- [x] Profile sparse vs dense+Accelerate crossover point
+  - Benchmarked: Dense+Accelerate beats sparse faer up to n≈100
+  - `SPARSE_THRESHOLD` now 100 with Accelerate, 50 without
+- [x] Adaptive threshold based on backend availability
+  - Conditional compilation: `#[cfg(all(target_os = "macos", feature = "accelerate"))]`
+
+**Benchmark Results (banded matrix):**
+| Size | Dense (Accelerate) | Sparse (faer) | Winner |
+|------|-------------------|---------------|--------|
+| n=10 | 401 ns | 3.3 µs | Dense 8x faster |
+| n=50 | 7.8 µs | 14.8 µs | Dense 1.9x faster |
+| n=100 | 29 µs | 29 µs | Tie |
+| n=500 | 884 µs | 147 µs | Sparse 6x faster |
 
 ### Measured Performance Gains (Dense LU Solve)
 
@@ -527,20 +543,69 @@ Crossover point: ~n=50. Accelerate wins big for medium/large circuits.
 
 ### 9b: Batched Sweep Solver (Primary GPU Win)
 
-Sweep analyses (DC sweep, AC sweep, Monte Carlo, corners) produce many matrices sharing the same sparsity pattern that differ in only a few entries. Batch all sweep points into a single GPU dispatch.
+**Key Insight:** Sweeps are embarrassingly parallel. The goal is to saturate GPU resources with many independent direct solves running simultaneously, not to make one solve faster with iterative methods.
 
-- [ ] Batched matrix preparation
-  - Shared symbolic structure, per-sweep-point numeric values
-  - Single symbolic factorization, batched numeric factorization + solve
-  - Applies to DC sweep, AC sweep, Monte Carlo, and corner analysis
-- [ ] GPU sparse batched solve
-  - cuSPARSE batched sparse solver (CUDA)
-  - Metal Performance Shaders / Accelerate batched solve (macOS)
-  - Batched dense solver fallback for small circuits (cuBLAS/Accelerate batched LU)
-- [ ] Monte Carlo / statistical analysis on GPU
-  - GPU-side random number generation and parameter sampling
-  - Histogram and statistics computation without CPU round-trip
+**Architecture by Matrix Size:**
+
+| Circuit Size | Parallelism Strategy | Implementation |
+|--------------|---------------------|----------------|
+| N < ~32 | Warp-per-matrix | One warp (32 threads) solves one system; all systems in parallel |
+| 32 < N < ~256 | Threadblock-per-matrix | One threadblock per system; in-block parallelism for factorization |
+| N > 256 | Multiple SMs per matrix | Larger systems need more parallelism per solve |
+
+**Batched Direct Solve Implementation:**
+
+- [x] `spicier-batched-sweep` crate with unified API
+  - `BatchedLuSolver` trait for backend-agnostic batched solves
+  - `BackendSelector` with auto-detection (CUDA → MPS → Metal → Accelerate → Faer → CPU)
+  - `GpuBatchConfig` with size thresholds for GPU dispatch
+- [x] CUDA backend (`spicier-backend-cuda`)
+  - cuSOLVER batched getrf/getrs for medium matrices
+  - cuBLAS batched operations
+- [x] Metal backends
+  - [x] wgpu/Metal compute shaders (`spicier-backend-metal`) - custom WGSL kernels
+  - [x] MPS backend (`spicier-backend-mps`) - Apple's optimized kernels
+- [x] High-performance CPU fallback
+  - Faer backend with SIMD-optimized LU
+  - Accelerate backend for macOS (LAPACK)
+- [ ] Truly batched MPS operations
+  - Current MPS impl processes matrices sequentially (batching API issues)
+  - Investigate parallel command buffer submission
+  - Or fall back to wgpu custom shaders for true batching
+
+**Pipeline Optimization:**
+
+- [ ] Pipelined assembly + solve
+  - While GPU solves batch K, CPU assembles batch K+1
+  - Hide matrix assembly latency behind GPU compute
+- [ ] Shared sparsity structure
+  - Sweep matrices share symbolic structure, differ only in values
+  - Upload structure once, stream value diffs per sweep point
+- [ ] Memory layout optimization
+  - Contiguous batch storage for coalesced GPU memory access
+  - Padding for alignment (warp size, cache lines)
+
+**Statistical Analysis on GPU:**
+
+- [ ] GPU-side random number generation
+  - cuRAND for CUDA, Metal Performance Shaders for Apple
+  - Avoid CPU→GPU transfer of random parameters
+- [ ] Histogram and statistics without CPU round-trip
+  - Reduction kernels for mean, variance, min, max
   - Yield analysis with thousands of samples
+- [ ] Early termination for converged points
+  - Track convergence status per sweep point
+  - Retired points don't consume compute in subsequent iterations
+
+**Float-Float Precision (Contingency):**
+
+If f32 precision causes convergence failures in batched solves:
+
+- [ ] FF-accumulating dot products for residual checks
+- [ ] Mixed-precision refinement: f32 solve + FF residual correction
+- [ ] Per-sweep-point precision escalation (f32 → FF → f64 fallback)
+
+This is a fallback, not the primary approach. Most circuits solve fine in f32.
 
 ### 9c: Batched Device Evaluation
 

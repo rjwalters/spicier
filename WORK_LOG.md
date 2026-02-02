@@ -1425,3 +1425,156 @@ Added rustdoc examples and comprehensive module-level documentation to core crat
 - Added mention of validation test suite with golden data
 
 **Test count:** 335 total tests passing (30 validation tests, 5 new doc tests)
+
+## 2026-02-02
+
+### Phase 9b: MPS Backend Implementation
+
+Created `spicier-backend-mps` crate for Apple Metal Performance Shaders (MPS) batched LU solving. MPS provides Apple's optimized linear algebra kernels, offering better performance than custom wgpu compute shaders.
+
+**New crate: `spicier-backend-mps`**
+
+| File | Purpose |
+|------|---------|
+| `Cargo.toml` | objc2-metal-performance-shaders dependencies |
+| `src/lib.rs` | Public exports (MpsBatchedLuSolver, MpsContext, MpsError) |
+| `src/error.rs` | MpsError enum (DeviceInit, NoDevice, Buffer, Decomposition) |
+| `src/context.rs` | MpsContext wrapping MTLDevice + MTLCommandQueue |
+| `src/batched_lu.rs` | Core batched LU solver using MPSMatrixDecompositionLU |
+
+**Key implementation details:**
+- Uses `objc2-metal-performance-shaders` for safe Rust bindings to MPS
+- `MpsContext::new()` discovers Metal devices, preferring discrete GPUs
+- f64 → f32 conversion (MPS primarily supports f32)
+- Column-major to row-major transposition for MPS memory layout
+- Sequential processing per matrix (MPS batching API issues discovered)
+- Stub implementation for non-macOS platforms
+
+**MPS workflow:**
+1. Create MTLDevice and command queue
+2. Convert input matrices (f64 → f32, col-major → row-major)
+3. Create MPSMatrix from MTLBuffer
+4. Encode MPSMatrixDecompositionLU kernel
+5. Encode MPSMatrixSolveLU kernel
+6. Read solutions back and convert (f32 → f64)
+
+**Integration into spicier-batched-sweep:**
+- Added `mps` feature flag
+- `MpsBatchedSolver` wrapper implementing `BatchedLuSolver` trait
+- `BackendType::Mps` variant added
+- `BackendSelector::prefer_mps()` constructor
+- Auto-detect order updated: CUDA → MPS → Metal (wgpu) → Faer → CPU
+
+**Files modified:**
+- `Cargo.toml` (workspace) - added spicier-backend-mps member
+- `crates/spicier-batched-sweep/Cargo.toml` - added mps feature
+- `crates/spicier-batched-sweep/src/lib.rs` - MPS exports
+- `crates/spicier-batched-sweep/src/solver.rs` - BackendType::Mps, prefer_mps()
+- `crates/spicier-batched-sweep/src/mps.rs` - new wrapper module
+
+**Tests:** All MPS backend tests pass (5 tests in spicier-backend-mps)
+- `test_mps_solver_identity` - 2×2 identity matrix solve
+- `test_mps_solver_simple_system` - 3×3 resistive network
+- `test_mps_solver_singular` - singular matrix detection
+- `test_mps_solver_larger_batch` - 100 systems batched solve
+- `test_mps_context_creation` - device discovery
+
+**Known limitation:** MPS batched operations currently process matrices sequentially (one command buffer per matrix) due to issues with MPS batch dimension handling. Future optimization could investigate truly parallel command buffer submission.
+
+### Faer Backend for Batched Sweeps
+
+Added high-performance CPU backend using faer crate for batched LU solving.
+
+**New file: `crates/spicier-batched-sweep/src/faer_solver.rs`**
+- `FaerBatchedSolver` implementing `BatchedLuSolver` trait
+- Uses faer's SIMD-optimized `partial_piv_lu()` for LU factorization
+- Singularity detection via NaN/Inf checking in solution
+- Column-major input (same as nalgebra) for consistency
+
+**Integration:**
+- Added `faer` feature to `spicier-batched-sweep`
+- `BackendType::Faer` variant in backend selection
+- `BackendSelector::prefer_faer()` constructor
+- Auto-detect order: CUDA → MPS → Metal → Accelerate → Faer → CPU
+
+**Benefits over nalgebra CPU fallback:**
+- Better SIMD utilization for dense operations
+- Modern, pure Rust implementation
+- Same sparsity structure reuse as existing faer integration
+
+**Tests:** 4 faer backend tests passing
+- `test_faer_solver_identity`
+- `test_faer_solver_simple_system`
+- `test_faer_solver_singular`
+- `test_faer_backend_type`
+
+### Accelerate Backend for Batched Sweeps
+
+Added Apple Accelerate framework backend for batched LU solving on macOS.
+
+**New file: `crates/spicier-batched-sweep/src/accelerate_solver.rs`**
+- `AccelerateBatchedSolver` implementing `BatchedLuSolver` trait
+- Direct FFI bindings to `dgesv_` (avoids lapack-src version conflicts)
+- Uses Apple's optimized LAPACK tuned for Apple Silicon and Intel Macs
+- Proper singularity detection via LAPACK info code
+
+**Integration:**
+- Added `accelerate` feature to `spicier-batched-sweep`
+- `BackendType::Accelerate` variant in backend selection
+- `BackendSelector::prefer_accelerate()` constructor
+
+**Tests:** 5 Accelerate backend tests passing
+- `test_accelerate_solver_identity`
+- `test_accelerate_solver_simple_system`
+- `test_accelerate_solver_singular`
+- `test_accelerate_solver_larger_system`
+- `test_accelerate_backend_type`
+
+### Phase 8b-2: Accelerate Factorization Reuse
+
+Extended Accelerate integration with LU factorization caching for Newton-Raphson iterations.
+
+**New types (`spicier-solver/src/linear.rs`):**
+- `CachedDenseLu` - Cached real LU factorization using `dgetrf_`/`dgetrs_`
+  - `new(matrix)` - Computes and stores LU factors
+  - `solve(rhs)` - Solves using cached factors (no re-factorization)
+  - Ideal for NR where Jacobian factorized once, solved multiple times
+- `CachedDenseLuComplex` - Cached complex LU factorization using `zgetrf_`/`zgetrs_`
+  - Same API as real version, for AC analysis
+
+**SIMD Accelerate extensions (`spicier-simd`):**
+- `cblas_zdotu_sub` - Unconjugated complex dot product
+- `cblas_zdotc_sub` - Conjugated complex dot product
+- `cblas_zgemv` - Complex matrix-vector multiply
+
+**SPARSE_THRESHOLD adjustment:**
+- With Accelerate: 100 nodes (dense competitive up to ~100)
+- Without Accelerate: 50 nodes (original threshold)
+
+### WORK_PLAN.md Update: GPU Sweep Architecture
+
+Updated Phase 9b with correct architectural understanding of GPU-accelerated sweeps.
+
+**Key insight documented:** Sweeps are embarrassingly parallel. The goal is to saturate GPU resources with many independent direct solves running simultaneously, not to make one solve faster with iterative methods (like GMRES/Krylov).
+
+**Added parallelism strategy table:**
+
+| Circuit Size | Strategy | Implementation |
+|--------------|----------|----------------|
+| N < ~32 | Warp-per-matrix | One warp (32 threads) per system |
+| 32 < N < ~256 | Threadblock-per-matrix | One threadblock per system |
+| N > 256 | Multiple SMs per matrix | Larger systems need more parallelism |
+
+**Marked completed:**
+- ✅ `spicier-batched-sweep` crate with unified API
+- ✅ CUDA backend (cuSOLVER batched getrf/getrs)
+- ✅ Metal backends (wgpu custom shaders + MPS optimized kernels)
+- ✅ High-performance CPU fallback (Faer SIMD + Accelerate LAPACK)
+
+**Float-float precision moved to contingency:** FF math is a fallback for f32 precision issues, not the primary approach. Most circuits solve fine in f32.
+
+**Remaining optimizations identified:**
+- Truly batched MPS operations (current impl is sequential)
+- Pipelined assembly + solve (CPU assembles batch K+1 while GPU solves batch K)
+- GPU-side random number generation for Monte Carlo
+- Shared sparsity structure (upload once, stream value diffs)

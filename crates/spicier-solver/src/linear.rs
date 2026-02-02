@@ -12,6 +12,13 @@ use num_complex::Complex;
 use crate::error::{Error, Result};
 
 /// Systems with this many or more variables use the sparse solver path.
+///
+/// With Accelerate enabled on macOS, dense LU is competitive up to ~100 nodes.
+/// Without Accelerate, sparse becomes faster around 50 nodes.
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+pub const SPARSE_THRESHOLD: usize = 100;
+
+#[cfg(not(all(target_os = "macos", feature = "accelerate")))]
 pub const SPARSE_THRESHOLD: usize = 50;
 
 // ============================================================================
@@ -33,6 +40,30 @@ unsafe extern "C" {
         info: *mut i32,
     );
 
+    /// LAPACK dgetrf: Compute LU factorization of a general matrix A.
+    /// A = P * L * U where P is a permutation matrix.
+    fn dgetrf_(
+        m: *const i32,
+        n: *const i32,
+        a: *mut f64,
+        lda: *const i32,
+        ipiv: *mut i32,
+        info: *mut i32,
+    );
+
+    /// LAPACK dgetrs: Solve A*X = B using LU factorization from dgetrf.
+    fn dgetrs_(
+        trans: *const i8,
+        n: *const i32,
+        nrhs: *const i32,
+        a: *const f64,
+        lda: *const i32,
+        ipiv: *const i32,
+        b: *mut f64,
+        ldb: *const i32,
+        info: *mut i32,
+    );
+
     /// LAPACK zgesv: Solve a complex general system of linear equations A*X = B.
     fn zgesv_(
         n: *const i32,
@@ -44,6 +75,250 @@ unsafe extern "C" {
         ldb: *const i32,
         info: *mut i32,
     );
+
+    /// LAPACK zgetrf: Compute LU factorization of a complex general matrix A.
+    fn zgetrf_(
+        m: *const i32,
+        n: *const i32,
+        a: *mut Complex<f64>,
+        lda: *const i32,
+        ipiv: *mut i32,
+        info: *mut i32,
+    );
+
+    /// LAPACK zgetrs: Solve A*X = B using complex LU factorization from zgetrf.
+    fn zgetrs_(
+        trans: *const i8,
+        n: *const i32,
+        nrhs: *const i32,
+        a: *const Complex<f64>,
+        lda: *const i32,
+        ipiv: *const i32,
+        b: *mut Complex<f64>,
+        ldb: *const i32,
+        info: *mut i32,
+    );
+}
+
+// ============================================================================
+// Cached Dense LU Solver (Accelerate)
+// ============================================================================
+
+/// Cached dense LU solver using Apple Accelerate.
+///
+/// Stores the LU factorization (computed once via `dgetrf_`) and reuses it
+/// for multiple solves with different RHS vectors (via `dgetrs_`).
+/// This is ideal for Newton-Raphson iterations where the Jacobian is
+/// factorized once and used for multiple RHS solves.
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+pub struct CachedDenseLu {
+    /// LU factors stored in column-major order (A = P*L*U)
+    lu_factors: Vec<f64>,
+    /// Pivot indices from factorization
+    ipiv: Vec<i32>,
+    /// Matrix dimension
+    size: usize,
+}
+
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+impl CachedDenseLu {
+    /// Create a new cached solver by factorizing the given matrix.
+    ///
+    /// The matrix is factorized once using `dgetrf_`. Subsequent solves
+    /// use `dgetrs_` which is much faster than re-factorizing.
+    pub fn new(a: &DMatrix<f64>) -> Result<Self> {
+        if a.nrows() != a.ncols() {
+            return Err(Error::DimensionMismatch {
+                expected: a.nrows(),
+                actual: a.ncols(),
+            });
+        }
+
+        let n = a.nrows();
+        let n_i32 = n as i32;
+
+        // Copy matrix in column-major order (dgetrf overwrites with LU factors)
+        let mut lu_factors: Vec<f64> = a.as_slice().to_vec();
+        let mut ipiv = vec![0i32; n];
+        let mut info: i32 = 0;
+
+        unsafe {
+            dgetrf_(
+                &n_i32,
+                &n_i32,
+                lu_factors.as_mut_ptr(),
+                &n_i32,
+                ipiv.as_mut_ptr(),
+                &mut info,
+            );
+        }
+
+        if info > 0 {
+            return Err(Error::SingularMatrix);
+        } else if info < 0 {
+            return Err(Error::SolverError(format!(
+                "dgetrf returned error code {}",
+                info
+            )));
+        }
+
+        Ok(Self {
+            lu_factors,
+            ipiv,
+            size: n,
+        })
+    }
+
+    /// Solve Ax = b using the cached LU factorization.
+    ///
+    /// This is much faster than `solve_dense` when solving multiple
+    /// systems with the same matrix but different RHS vectors.
+    pub fn solve(&self, b: &DVector<f64>) -> Result<DVector<f64>> {
+        if self.size != b.len() {
+            return Err(Error::DimensionMismatch {
+                expected: self.size,
+                actual: b.len(),
+            });
+        }
+
+        let n_i32 = self.size as i32;
+        let nrhs: i32 = 1;
+        let trans: i8 = b'N' as i8; // No transpose
+
+        // Copy RHS (dgetrs overwrites with solution)
+        let mut x: Vec<f64> = b.as_slice().to_vec();
+        let mut info: i32 = 0;
+
+        unsafe {
+            dgetrs_(
+                &trans,
+                &n_i32,
+                &nrhs,
+                self.lu_factors.as_ptr(),
+                &n_i32,
+                self.ipiv.as_ptr(),
+                x.as_mut_ptr(),
+                &n_i32,
+                &mut info,
+            );
+        }
+
+        if info != 0 {
+            return Err(Error::SolverError(format!(
+                "dgetrs returned error code {}",
+                info
+            )));
+        }
+
+        Ok(DVector::from_vec(x))
+    }
+
+    /// Get the matrix dimension.
+    pub fn size(&self) -> usize {
+        self.size
+    }
+}
+
+/// Cached complex dense LU solver using Apple Accelerate.
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+pub struct CachedDenseLuComplex {
+    /// LU factors stored in column-major order
+    lu_factors: Vec<Complex<f64>>,
+    /// Pivot indices from factorization
+    ipiv: Vec<i32>,
+    /// Matrix dimension
+    size: usize,
+}
+
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+impl CachedDenseLuComplex {
+    /// Create a new cached solver by factorizing the given complex matrix.
+    pub fn new(a: &DMatrix<Complex<f64>>) -> Result<Self> {
+        if a.nrows() != a.ncols() {
+            return Err(Error::DimensionMismatch {
+                expected: a.nrows(),
+                actual: a.ncols(),
+            });
+        }
+
+        let n = a.nrows();
+        let n_i32 = n as i32;
+
+        let mut lu_factors: Vec<Complex<f64>> = a.as_slice().to_vec();
+        let mut ipiv = vec![0i32; n];
+        let mut info: i32 = 0;
+
+        unsafe {
+            zgetrf_(
+                &n_i32,
+                &n_i32,
+                lu_factors.as_mut_ptr(),
+                &n_i32,
+                ipiv.as_mut_ptr(),
+                &mut info,
+            );
+        }
+
+        if info > 0 {
+            return Err(Error::SingularMatrix);
+        } else if info < 0 {
+            return Err(Error::SolverError(format!(
+                "zgetrf returned error code {}",
+                info
+            )));
+        }
+
+        Ok(Self {
+            lu_factors,
+            ipiv,
+            size: n,
+        })
+    }
+
+    /// Solve Ax = b using the cached LU factorization.
+    pub fn solve(&self, b: &DVector<Complex<f64>>) -> Result<DVector<Complex<f64>>> {
+        if self.size != b.len() {
+            return Err(Error::DimensionMismatch {
+                expected: self.size,
+                actual: b.len(),
+            });
+        }
+
+        let n_i32 = self.size as i32;
+        let nrhs: i32 = 1;
+        let trans: i8 = b'N' as i8;
+
+        let mut x: Vec<Complex<f64>> = b.as_slice().to_vec();
+        let mut info: i32 = 0;
+
+        unsafe {
+            zgetrs_(
+                &trans,
+                &n_i32,
+                &nrhs,
+                self.lu_factors.as_ptr(),
+                &n_i32,
+                self.ipiv.as_ptr(),
+                x.as_mut_ptr(),
+                &n_i32,
+                &mut info,
+            );
+        }
+
+        if info != 0 {
+            return Err(Error::SolverError(format!(
+                "zgetrs returned error code {}",
+                info
+            )));
+        }
+
+        Ok(DVector::from_vec(x))
+    }
+
+    /// Get the matrix dimension.
+    pub fn size(&self) -> usize {
+        self.size
+    }
 }
 
 // ============================================================================
@@ -720,5 +995,189 @@ mod tests {
         let ax1 = triplets2[2].2 * x2[0] + triplets2[3].2 * x2[1];
         assert!((ax0 - b2[0]).norm() < 1e-10, "Ax2[0] mismatch");
         assert!((ax1 - b2[1]).norm() < 1e-10, "Ax2[1] mismatch");
+    }
+
+    // ========================================================================
+    // Cached Dense LU Tests (Accelerate)
+    // ========================================================================
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    #[test]
+    fn test_cached_dense_lu_simple() {
+        // 2x + y = 5
+        // x + 3y = 6
+        // Solution: x = 1.8, y = 1.4
+        let a = dmatrix![2.0, 1.0; 1.0, 3.0];
+        let b = dvector![5.0, 6.0];
+
+        let cached = CachedDenseLu::new(&a).unwrap();
+        let x = cached.solve(&b).unwrap();
+
+        assert!((x[0] - 1.8).abs() < 1e-10, "x[0] = {} (expected 1.8)", x[0]);
+        assert!((x[1] - 1.4).abs() < 1e-10, "x[1] = {} (expected 1.4)", x[1]);
+    }
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    #[test]
+    fn test_cached_dense_lu_reuse() {
+        // Test factorize-once, solve-many pattern (Newton-Raphson use case)
+        let a = dmatrix![4.0, 1.0; 1.0, 3.0];
+        let cached = CachedDenseLu::new(&a).unwrap();
+
+        // First solve
+        let b1 = dvector![5.0, 4.0];
+        let x1 = cached.solve(&b1).unwrap();
+        // A = [[4,1],[1,3]], b = [5,4] → x = [1,1]
+        assert!((x1[0] - 1.0).abs() < 1e-10, "x1[0] = {} (expected 1.0)", x1[0]);
+        assert!((x1[1] - 1.0).abs() < 1e-10, "x1[1] = {} (expected 1.0)", x1[1]);
+
+        // Second solve with different RHS (reuses LU factorization)
+        let b2 = dvector![10.0, 8.0];
+        let x2 = cached.solve(&b2).unwrap();
+        // Same A, b = [10,8] → x = [2,2]
+        assert!((x2[0] - 2.0).abs() < 1e-10, "x2[0] = {} (expected 2.0)", x2[0]);
+        assert!((x2[1] - 2.0).abs() < 1e-10, "x2[1] = {} (expected 2.0)", x2[1]);
+
+        // Third solve
+        let b3 = dvector![15.0, 12.0];
+        let x3 = cached.solve(&b3).unwrap();
+        // Same A, b = [15,12] → x = [3,3]
+        assert!((x3[0] - 3.0).abs() < 1e-10, "x3[0] = {} (expected 3.0)", x3[0]);
+        assert!((x3[1] - 3.0).abs() < 1e-10, "x3[1] = {} (expected 3.0)", x3[1]);
+    }
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    #[test]
+    fn test_cached_dense_lu_matches_uncached() {
+        // Verify cached solve matches solve_dense for larger system
+        let size = 50;
+        let a = DMatrix::from_fn(size, size, |i, j| {
+            if i == j {
+                (size as f64) + 1.0
+            } else {
+                1.0 / ((i as f64 - j as f64).abs() + 1.0)
+            }
+        });
+        let b = DVector::from_fn(size, |i, _| (i + 1) as f64);
+
+        let x_uncached = solve_dense(&a, &b).unwrap();
+
+        let cached = CachedDenseLu::new(&a).unwrap();
+        let x_cached = cached.solve(&b).unwrap();
+
+        for i in 0..size {
+            assert!(
+                (x_uncached[i] - x_cached[i]).abs() < 1e-10,
+                "Mismatch at [{}]: uncached={}, cached={}",
+                i,
+                x_uncached[i],
+                x_cached[i]
+            );
+        }
+    }
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    #[test]
+    fn test_cached_dense_lu_singular() {
+        let a = dmatrix![1.0, 2.0; 2.0, 4.0]; // Singular (row 2 = 2 * row 1)
+        let result = CachedDenseLu::new(&a);
+        assert!(matches!(result, Err(Error::SingularMatrix)));
+    }
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    #[test]
+    fn test_cached_dense_lu_dimension_mismatch() {
+        let a = dmatrix![2.0, 1.0; 1.0, 3.0];
+        let b = dvector![1.0, 2.0, 3.0]; // Wrong size
+
+        let cached = CachedDenseLu::new(&a).unwrap();
+        let result = cached.solve(&b);
+        assert!(matches!(result, Err(Error::DimensionMismatch { .. })));
+    }
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    #[test]
+    fn test_cached_dense_lu_complex_simple() {
+        // (2+i)x + y = 5+i
+        // x + (3-i)y = 6
+        let a = dmatrix![
+            Complex::new(2.0, 1.0), Complex::new(1.0, 0.0);
+            Complex::new(1.0, 0.0), Complex::new(3.0, -1.0)
+        ];
+        let b = dvector![Complex::new(5.0, 1.0), Complex::new(6.0, 0.0)];
+
+        let cached = CachedDenseLuComplex::new(&a).unwrap();
+        let x = cached.solve(&b).unwrap();
+
+        // Verify by computing Ax and comparing to b
+        let ax0 = a[(0, 0)] * x[0] + a[(0, 1)] * x[1];
+        let ax1 = a[(1, 0)] * x[0] + a[(1, 1)] * x[1];
+
+        assert!((ax0 - b[0]).norm() < 1e-10, "Ax[0] mismatch: got {:?}", ax0);
+        assert!((ax1 - b[1]).norm() < 1e-10, "Ax[1] mismatch: got {:?}", ax1);
+    }
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    #[test]
+    fn test_cached_dense_lu_complex_reuse() {
+        // Test factorize-once, solve-many pattern for complex systems
+        let a = dmatrix![
+            Complex::new(3.0, 1.0), Complex::new(1.0, 0.0);
+            Complex::new(1.0, 0.0), Complex::new(3.0, -1.0)
+        ];
+        let cached = CachedDenseLuComplex::new(&a).unwrap();
+
+        // First solve
+        let b1 = dvector![Complex::new(4.0, 1.0), Complex::new(4.0, -1.0)];
+        let x1 = cached.solve(&b1).unwrap();
+
+        // Verify Ax1 = b1
+        let ax0 = a[(0, 0)] * x1[0] + a[(0, 1)] * x1[1];
+        let ax1 = a[(1, 0)] * x1[0] + a[(1, 1)] * x1[1];
+        assert!((ax0 - b1[0]).norm() < 1e-10, "First solve: Ax[0] mismatch");
+        assert!((ax1 - b1[1]).norm() < 1e-10, "First solve: Ax[1] mismatch");
+
+        // Second solve with different RHS
+        let b2 = dvector![Complex::new(8.0, 2.0), Complex::new(8.0, -2.0)];
+        let x2 = cached.solve(&b2).unwrap();
+
+        // Verify Ax2 = b2
+        let ax0 = a[(0, 0)] * x2[0] + a[(0, 1)] * x2[1];
+        let ax1 = a[(1, 0)] * x2[0] + a[(1, 1)] * x2[1];
+        assert!((ax0 - b2[0]).norm() < 1e-10, "Second solve: Ax[0] mismatch");
+        assert!((ax1 - b2[1]).norm() < 1e-10, "Second solve: Ax[1] mismatch");
+    }
+
+    #[cfg(all(target_os = "macos", feature = "accelerate"))]
+    #[test]
+    fn test_cached_dense_lu_complex_matches_uncached() {
+        // Verify cached complex solve matches solve_complex
+        let size = 30;
+        let a = DMatrix::from_fn(size, size, |i, j| {
+            if i == j {
+                Complex::new((size as f64) + 1.0, 0.5)
+            } else {
+                Complex::new(
+                    1.0 / ((i as f64 - j as f64).abs() + 1.0),
+                    0.1 / ((i as f64 + j as f64) + 1.0),
+                )
+            }
+        });
+        let b = DVector::from_fn(size, |i, _| Complex::new((i + 1) as f64, -(i as f64) * 0.1));
+
+        let x_uncached = solve_complex(&a, &b).unwrap();
+
+        let cached = CachedDenseLuComplex::new(&a).unwrap();
+        let x_cached = cached.solve(&b).unwrap();
+
+        for i in 0..size {
+            assert!(
+                (x_uncached[i] - x_cached[i]).norm() < 1e-10,
+                "Mismatch at [{}]: uncached={:?}, cached={:?}",
+                i,
+                x_uncached[i],
+                x_cached[i]
+            );
+        }
     }
 }

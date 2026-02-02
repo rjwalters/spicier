@@ -1,9 +1,31 @@
 //! SIMD-accelerated conjugate dot product for complex vectors.
 //!
 //! Computes `<a, b> = sum_i conj(a[i]) * b[i]` — the standard complex inner product.
+//!
+//! On macOS with the `accelerate` feature, uses Apple's Accelerate framework
+//! for optimized complex BLAS operations.
 
 use crate::capability::SimdCapability;
 use num_complex::Complex64 as C64;
+
+// ============================================================================
+// Apple Accelerate FFI Bindings
+// ============================================================================
+
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+#[link(name = "Accelerate", kind = "framework")]
+unsafe extern "C" {
+    /// BLAS zdotc: Compute conjugated complex dot product.
+    /// Returns: sum(conj(x[i]) * y[i]) for i in 0..n
+    fn cblas_zdotc_sub(
+        n: i32,
+        x: *const C64,
+        incx: i32,
+        y: *const C64,
+        incy: i32,
+        result: *mut C64,
+    );
+}
 
 /// Compute the conjugate dot product (complex inner product):
 ///
@@ -30,7 +52,7 @@ pub fn complex_conjugate_dot_product(a: &[C64], b: &[C64], capability: SimdCapab
             unsafe { conjugate_dot_avx2(a, b) }
         }
         #[cfg(all(target_os = "macos", feature = "accelerate"))]
-        SimdCapability::Accelerate => conjugate_dot_scalar(a, b), // TODO: implement with vDSP
+        SimdCapability::Accelerate => conjugate_dot_accelerate(a, b),
         SimdCapability::Scalar => conjugate_dot_scalar(a, b),
     }
 }
@@ -43,6 +65,27 @@ pub fn conjugate_dot_scalar(a: &[C64], b: &[C64]) -> C64 {
         sum += ai.conj() * bi;
     }
     sum
+}
+
+/// Apple Accelerate implementation of conjugate dot product.
+#[cfg(all(target_os = "macos", feature = "accelerate"))]
+#[inline]
+pub fn conjugate_dot_accelerate(a: &[C64], b: &[C64]) -> C64 {
+    if a.is_empty() {
+        return C64::new(0.0, 0.0);
+    }
+    let mut result = C64::new(0.0, 0.0);
+    unsafe {
+        cblas_zdotc_sub(
+            a.len() as i32,
+            a.as_ptr(),
+            1,
+            b.as_ptr(),
+            1,
+            &mut result,
+        );
+    }
+    result
 }
 
 // ============================================================================
