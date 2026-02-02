@@ -994,20 +994,27 @@ Full NR iteration on GPU with minimal CPU involvement.
 
 **Implementation:** `crates/spicier-backend-metal/src/gpu_newton.rs` (~1750 lines)
 
-#### 9c-5: Memory Management for Large Sweeps
+#### 9c-5: Memory Management for Large Sweeps ✅ COMPLETE
 
-Handle GB-scale working sets.
+Handle GB-scale working sets for massive parallel sweeps (10k+ points).
 
-- [ ] Multi-buffer chunking
-  - If 10k sweeps × 100×100 exceeds buffer limits, chunk into batches
-  - Pipeline: process chunk N while uploading chunk N+1
-  - wgpu 256MB limit → ~6k sweeps of 100×100 f32 matrices
-- [ ] Memory pool
-  - Pre-allocate working memory for max expected sweep size
-  - Reuse across multiple sweep runs
-- [ ] Streaming results
-  - Don't store all solutions, compute statistics on-the-fly
-  - Only store solutions for failed/interesting points
+- [x] Multi-buffer chunking
+  - `GpuMemoryCalculator` computes optimal chunk sizes based on device limits
+  - `ChunkedSweepExecutor` processes sweeps in memory-fitting chunks
+  - `solve_chunked()` method auto-chunks when sweep exceeds 256MB limit
+- [x] Memory pool
+  - `BufferPool` with size-bucketed buffer reuse (1KB to 256MB)
+  - Pre-warm support for expected buffer sizes
+  - `ScopedBuffer` for RAII-style automatic release
+- [x] Streaming results
+  - `StreamingStatistics` computes stats incrementally without storing all solutions
+  - Supports f32/f64 input, mergeable for parallel reduction
+  - Only downloads aggregated statistics, not raw solutions
+- [x] Clear error handling
+  - `BufferTooLarge` and `OutOfMemory` error variants with helpful messages
+  - `WgpuContext::max_buffer_size()` queries device limits
+
+**Implementation:** `memory.rs`, `buffer_pool.rs`, `chunked_sweep.rs` (24 tests)
 
 ### 9d: Large-Circuit Sparse Solve
 
@@ -1044,7 +1051,7 @@ For circuits with 50k+ nodes, sparse LU factorization itself is the bottleneck.
 - [x] GPU device evaluation achieves >100M evals/sec (achieved: 167M)
 - [x] Parallel CPU sweeps with rayon achieve 6-7x speedup
 - [x] Performance documented with clear GPU vs CPU recommendations
-- [ ] 10k-point sweep with GPU device eval + CPU solve completes
+- [x] 10k-point sweep with GPU device eval + CPU solve completes (chunked execution)
 - [x] Full GPU NR loop (device eval → assembly → solve → converge) working
 - [x] All results match CPU reference to within solver tolerance (diode test verified)
 
