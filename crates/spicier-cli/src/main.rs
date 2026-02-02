@@ -656,9 +656,7 @@ impl DcSweepStamper for NetlistSweepStamper<'_> {
 
         // Then override the swept source's value in the RHS.
         // For a voltage source, the RHS entry at (num_nodes + branch_idx) contains the voltage.
-        // We need to find the branch index for the named source.
-        // For now, we patch the first voltage source's RHS entry.
-        // TODO: look up source by name when Netlist supports device name queries
+        // Look up the branch index by source name.
         if let Some(idx) = self.netlist.find_vsource_branch_index(&self.source_name) {
             let bi = self.netlist.num_nodes() + idx;
             mna.rhs_mut()[bi] = value;

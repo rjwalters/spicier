@@ -89,31 +89,35 @@ Compatibility with existing SPICE netlists is a **goal**, not a constraint.
 
 ## Status
 
-**Active development — core simulation engine functional**
+**Active development — full analysis suite functional**
 
 Completed:
-* Cargo workspace with 5 crates (core, solver, devices, parser, cli)
+* Cargo workspace with 9 crates (core, solver, devices, parser, cli, simd, backend-cpu, backend-cuda, backend-metal)
 * Circuit graph representation with MNA matrix stamping
 * Device models: R, L, C, V, I (passive + sources) with MNA stamps
 * Nonlinear devices: Diode (Shockley equation), MOSFET Level 1 (NMOS/PMOS)
 * Controlled sources: VCVS (E), VCCS (G), CCCS (F), CCVS (H) with MNA stamps
 * Dense linear solver (LU decomposition) — real and complex
 * Sparse linear solver (faer LU) — real and complex, auto-selected for systems with 50+ variables
-* Newton-Raphson nonlinear solver with convergence criteria and voltage limiting
+* Newton-Raphson nonlinear solver with convergence criteria, voltage limiting, source stepping, Gmin stepping
 * Nonlinear DC operating point via Newton-Raphson (auto-dispatched when diodes/MOSFETs present)
 * SPICE netlist parser (R, C, L, V, I, D, M, E, G, F, H elements; .MODEL; SI suffixes)
 * DC operating point analysis (.OP) with CLI integration
-* Transient analysis (.TRAN) — Backward Euler and Trapezoidal integration, CLI output
-* AC small-signal analysis (.AC) — Linear, Decade, and Octave sweeps
-* DC sweep analysis (.DC) with CLI tabular output
-* Analysis command parsing (.OP, .DC, .AC, .TRAN) from netlists
-* Multi-analysis CLI dispatch based on netlist commands
-* 106 tests passing, clippy clean
+* Transient analysis (.TRAN) — Backward Euler, Trapezoidal, and TR-BDF2 integration with adaptive timestep
+* AC small-signal analysis (.AC) — Linear, Decade, and Octave sweeps with automatic linearization
+* DC sweep analysis (.DC) with single and nested sweep variables for I-V curve tracing
+* Initial conditions (.IC) with UIC option to skip DC operating point
+* .PRINT command support (V, I, VM, VP, VDB, VR, VI output variables)
+* SIMD-accelerated dot products and matvec (AVX-512/AVX2/scalar with runtime detection)
+* Batched device evaluation for diodes and MOSFETs (SoA layout, AVX2 kernels)
+* GMRES iterative solver with Jacobi preconditioner for large systems
+* Compute backend abstraction (CPU, CUDA, Metal) with automatic detection
+* 255 tests passing, clippy clean
 * GitHub Actions CI (Linux, macOS, Windows), benchmarking infrastructure
 
 In progress:
-* Adaptive timestep control, initial conditions (.IC)
-* Automatic small-signal linearization of nonlinear devices for AC
+* GPU-accelerated sparse solve for large circuits
+* Batched parameter sweeps on GPU (Monte Carlo, corners)
 
 Expect sharp edges, incomplete features, and rapid iteration.
 
