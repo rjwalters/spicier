@@ -7,6 +7,7 @@ use spicier_devices::diode::{Diode, DiodeParams};
 use spicier_devices::mosfet::{Mosfet, MosfetParams, MosfetType};
 use spicier_devices::passive::{Capacitor, Inductor, Resistor};
 use spicier_devices::sources::{CurrentSource, VoltageSource};
+use spicier_devices::Waveform;
 
 use crate::error::{Error, Result};
 use crate::lexer::{Lexer, SpannedToken, Token};
@@ -718,17 +719,176 @@ impl<'a> Parser<'a> {
         let node_pos = self.expect_node(line)?;
         let node_neg = self.expect_node(line)?;
 
-        // Value can be DC value or just a number
-        let value = self.expect_value_or_dc(line)?;
-
         let current_index = self.next_current_index;
         self.next_current_index += 1;
 
-        let vsource = VoltageSource::new(name, node_pos, node_neg, value, current_index);
+        // Parse source specification: [DC value] [AC mag [phase]] [PULSE|SIN|PWL]
+        let mut dc_value = 0.0;
+        let mut waveform: Option<Waveform> = None;
+
+        // Keep parsing until we hit end of line or no more valid tokens
+        loop {
+            match self.peek() {
+                Token::Name(n) => {
+                    let upper = n.to_uppercase();
+                    match upper.as_str() {
+                        "DC" => {
+                            self.advance();
+                            dc_value = self.expect_value(line)?;
+                        }
+                        "AC" => {
+                            // Skip AC specification for now (used in AC analysis)
+                            self.advance();
+                            let _ = self.expect_value(line)?; // mag
+                            // Optional phase
+                            if let Token::Value(_) = self.peek() {
+                                let _ = self.expect_value(line)?;
+                            }
+                        }
+                        "PULSE" => {
+                            self.advance();
+                            waveform = Some(self.parse_pulse_waveform(line)?);
+                        }
+                        "SIN" => {
+                            self.advance();
+                            waveform = Some(self.parse_sin_waveform(line)?);
+                        }
+                        "PWL" => {
+                            self.advance();
+                            waveform = Some(self.parse_pwl_waveform(line)?);
+                        }
+                        _ => break, // Unknown keyword, stop parsing
+                    }
+                }
+                Token::Value(_) => {
+                    // Plain value is treated as DC value
+                    dc_value = self.expect_value(line)?;
+                }
+                _ => break, // End of source spec
+            }
+        }
+
+        let vsource = match waveform {
+            Some(w) => VoltageSource::with_waveform(name, node_pos, node_neg, w, current_index),
+            None => VoltageSource::new(name, node_pos, node_neg, dc_value, current_index),
+        };
         self.netlist.add_device(vsource);
 
         self.skip_to_eol();
         Ok(())
+    }
+
+    /// Parse PULSE(v1 v2 td tr tf pw per)
+    fn parse_pulse_waveform(&mut self, line: usize) -> Result<Waveform> {
+        // Expect opening paren
+        if !matches!(self.peek(), Token::LParen) {
+            return Err(Error::ParseError {
+                line,
+                message: "expected '(' after PULSE".to_string(),
+            });
+        }
+        self.advance();
+
+        let v1 = self.expect_value(line)?;
+        let v2 = self.expect_value(line)?;
+
+        // Optional parameters with defaults
+        let td = self.try_expect_value().unwrap_or(0.0);
+        let tr = self.try_expect_value().unwrap_or(0.0);
+        let tf = self.try_expect_value().unwrap_or(0.0);
+        let pw = self.try_expect_value().unwrap_or(0.0);
+        let per = self.try_expect_value().unwrap_or(0.0);
+
+        // Expect closing paren
+        if !matches!(self.peek(), Token::RParen) {
+            return Err(Error::ParseError {
+                line,
+                message: "expected ')' after PULSE parameters".to_string(),
+            });
+        }
+        self.advance();
+
+        Ok(Waveform::pulse(v1, v2, td, tr, tf, pw, per))
+    }
+
+    /// Parse SIN(vo va freq [td [theta [phase]]])
+    fn parse_sin_waveform(&mut self, line: usize) -> Result<Waveform> {
+        if !matches!(self.peek(), Token::LParen) {
+            return Err(Error::ParseError {
+                line,
+                message: "expected '(' after SIN".to_string(),
+            });
+        }
+        self.advance();
+
+        let vo = self.expect_value(line)?;
+        let va = self.expect_value(line)?;
+        let freq = self.expect_value(line)?;
+
+        // Optional parameters with defaults
+        let td = self.try_expect_value().unwrap_or(0.0);
+        let theta = self.try_expect_value().unwrap_or(0.0);
+        let phase = self.try_expect_value().unwrap_or(0.0);
+
+        if !matches!(self.peek(), Token::RParen) {
+            return Err(Error::ParseError {
+                line,
+                message: "expected ')' after SIN parameters".to_string(),
+            });
+        }
+        self.advance();
+
+        Ok(Waveform::sin_full(vo, va, freq, td, theta, phase))
+    }
+
+    /// Parse PWL(t1 v1 t2 v2 ...)
+    fn parse_pwl_waveform(&mut self, line: usize) -> Result<Waveform> {
+        if !matches!(self.peek(), Token::LParen) {
+            return Err(Error::ParseError {
+                line,
+                message: "expected '(' after PWL".to_string(),
+            });
+        }
+        self.advance();
+
+        let mut points = Vec::new();
+        while let Some(t) = self.try_expect_value() {
+            let v = self.expect_value(line)?;
+            points.push((t, v));
+        }
+
+        if points.is_empty() {
+            return Err(Error::ParseError {
+                line,
+                message: "PWL requires at least one time-value pair".to_string(),
+            });
+        }
+
+        if !matches!(self.peek(), Token::RParen) {
+            return Err(Error::ParseError {
+                line,
+                message: "expected ')' after PWL parameters".to_string(),
+            });
+        }
+        self.advance();
+
+        Ok(Waveform::pwl(points))
+    }
+
+    /// Try to parse a value, returning None if not available.
+    fn try_expect_value(&mut self) -> Option<f64> {
+        match self.peek() {
+            Token::Value(s) => {
+                let s = s.clone();
+                if let Some(v) = parse_value(&s) {
+                    self.advance();
+                    Some(v)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     fn parse_current_source(&mut self, name: &str, line: usize) -> Result<()> {

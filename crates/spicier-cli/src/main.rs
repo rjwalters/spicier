@@ -955,16 +955,17 @@ struct NetlistTransientStamper<'a> {
 }
 
 impl TransientStamper for NetlistTransientStamper<'_> {
-    fn stamp_static(&self, mna: &mut MnaSystem) {
+    fn stamp_at_time(&self, mna: &mut MnaSystem, time: f64) {
         // Stamp all devices that are NOT capacitors or inductors.
         // Capacitors and inductors are handled by companion models.
+        // For time-varying sources (PULSE, SIN), evaluate at the given time.
         for device in self.netlist.devices() {
             match device.transient_info() {
                 TransientDeviceInfo::Capacitor { .. } | TransientDeviceInfo::Inductor { .. } => {
                     // Skip reactive devices; their companion models are stamped separately
                 }
                 TransientDeviceInfo::None => {
-                    device.stamp(mna);
+                    device.stamp_at_time(mna, time);
                 }
             }
         }

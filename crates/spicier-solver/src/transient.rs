@@ -516,8 +516,11 @@ impl TransientResult {
 
 /// Callback for stamping the circuit at each transient timestep.
 pub trait TransientStamper {
-    /// Stamp all non-reactive (resistive + source) elements.
-    fn stamp_static(&self, mna: &mut MnaSystem);
+    /// Stamp all non-reactive (resistive + source) elements at the given time.
+    ///
+    /// For time-varying sources (PULSE, SIN, PWL), the source value should be
+    /// evaluated at the specified time. For DC sources, time is ignored.
+    fn stamp_at_time(&self, mna: &mut MnaSystem, time: f64);
 
     /// Get the number of nodes.
     fn num_nodes(&self) -> usize;
@@ -585,7 +588,7 @@ pub fn solve_transient(
         let mut mna = MnaSystem::new(num_nodes, num_vsources);
 
         // Stamp static elements (resistors, sources)
-        stamper.stamp_static(&mut mna);
+        stamper.stamp_at_time(&mut mna, t);
 
         // Stamp companion models for reactive elements and solve
         match params.method {
@@ -691,7 +694,7 @@ pub fn solve_transient(
 
                 // Stage 2: BDF2 step for (1-γ)*h
                 let mut mna2 = MnaSystem::new(num_nodes, num_vsources);
-                stamper.stamp_static(&mut mna2);
+                stamper.stamp_at_time(&mut mna2, t);
                 for cap in caps.iter() {
                     cap.stamp_trbdf2_bdf2(&mut mna2, h);
                 }
@@ -792,7 +795,7 @@ pub fn solve_transient_dispatched(
         let t = (step as f64) * h;
 
         let mut mna = MnaSystem::new(num_nodes, num_vsources);
-        stamper.stamp_static(&mut mna);
+        stamper.stamp_at_time(&mut mna, t);
 
         // Helper closure for solving
         let solve_mna = |mna: &MnaSystem,
@@ -873,7 +876,7 @@ pub fn solve_transient_dispatched(
 
                 // Stage 2: BDF2 for (1-γ)*h
                 let mut mna2 = MnaSystem::new(num_nodes, num_vsources);
-                stamper.stamp_static(&mut mna2);
+                stamper.stamp_at_time(&mut mna2, t);
                 for cap in caps.iter() {
                     cap.stamp_trbdf2_bdf2(&mut mna2, h);
                 }
@@ -1106,7 +1109,7 @@ pub fn solve_transient_adaptive(
 
         // Build MNA system for this timestep
         let mut mna = MnaSystem::new(num_nodes, num_vsources);
-        stamper.stamp_static(&mut mna);
+        stamper.stamp_at_time(&mut mna, t);
 
         // Stamp companion models (using Trapezoidal for better accuracy)
         for cap in caps.iter() {
@@ -1220,7 +1223,7 @@ mod tests {
         // Simple RC circuit with dispatched solver
         struct SimpleRcStamper;
         impl TransientStamper for SimpleRcStamper {
-            fn stamp_static(&self, mna: &mut MnaSystem) {
+            fn stamp_at_time(&self, mna: &mut MnaSystem, _time: f64) {
                 mna.stamp_voltage_source(Some(0), None, 0, 5.0);
                 mna.stamp_conductance(Some(0), Some(1), 1.0 / 1000.0);
             }
@@ -1254,7 +1257,7 @@ mod tests {
     }
 
     impl TransientStamper for RcCircuitStamper {
-        fn stamp_static(&self, mna: &mut MnaSystem) {
+        fn stamp_at_time(&self, mna: &mut MnaSystem, _time: f64) {
             // Voltage source at node 0, current var index 0
             mna.stamp_voltage_source(Some(0), None, 0, self.voltage);
             // Resistor from node 0 to node 1

@@ -996,3 +996,60 @@ Updated README.md to reflect current project status:
 - Crate count updated from 5 to 9 (added simd, backend-cpu, backend-cuda, backend-metal)
 - Moved completed features from "in progress" to "completed" (adaptive timestep, AC linearization)
 - Added new completed features: TR-BDF2, UIC, .PRINT, SIMD, batched evaluation, GMRES, backend abstraction
+
+### Time-Varying Sources (PULSE, SIN, PWL)
+
+Added time-varying waveform support for transient analysis, enabling realistic stimulus patterns for sources.
+
+**New module (`spicier-devices/src/waveforms.rs`):**
+- `Waveform` enum with variants: `Dc`, `Pulse`, `Sin`, `Pwl`
+- `Waveform::value_at(time)` — evaluates waveform at specific time
+- `Waveform::dc_value()` — returns DC value for operating point calculation
+
+**PULSE waveform:**
+- Parameters: v1, v2, td (delay), tr (rise), tf (fall), pw (width), per (period)
+- Supports periodic pulses with proper edge timing
+- Example: `PULSE(0 5 1m 0.1m 0.1m 2m 5m)` — 5V pulse, 1ms delay, 2ms width, 5ms period
+
+**SIN waveform:**
+- Parameters: vo (offset), va (amplitude), freq, td (delay), theta (damping), phase
+- Supports damped sinusoids: vo + va * sin(2πf(t-td) + phase) * exp(-theta*(t-td))
+- Example: `SIN(0 1 1k 0 0 0)` — 1kHz, 1V amplitude sine wave
+
+**PWL (Piecewise Linear) waveform:**
+- Arbitrary time-value pairs with linear interpolation
+- Holds first value before first time, last value after last time
+- Example: `PWL(0 0 1m 5 2m 5 3m 0)` — ramp up at 1ms, hold, ramp down at 3ms
+
+**Source device extensions (`spicier-devices/src/sources.rs`):**
+- `VoltageSource::with_waveform()` — creates source with time-varying waveform
+- `VoltageSource::value_at(time)` — evaluates waveform at time
+- `CurrentSource::with_waveform()` and `CurrentSource::value_at(time)` — same for current sources
+- `stamp_at_time()` method stamps source value at specific time
+
+**Stamper trait extension (`spicier-core/src/netlist.rs`):**
+- `stamp_at_time(&self, mna, time)` — stamps device at specific simulation time
+- Default implementation calls regular `stamp()` for non-time-varying devices
+- Time-varying sources override to evaluate waveform at given time
+
+**TransientStamper update (`spicier-solver/src/transient.rs`):**
+- Renamed `stamp_static()` to `stamp_at_time(time)` for clarity
+- All call sites updated to pass current simulation time
+
+**Parser support (`spicier-parser/src/parser.rs`):**
+- `parse_pulse_waveform()` — parses PULSE(...) specification
+- `parse_sin_waveform()` — parses SIN(...) specification
+- `parse_pwl_waveform()` — parses PWL(...) specification
+- `try_expect_value()` helper for optional parameters with defaults
+- Voltage and current source parsing now handles DC + waveform syntax
+
+**CLI integration (`spicier-cli/src/main.rs`):**
+- `NetlistTransientStamper::stamp_at_time()` passes time to each device
+- Time-varying sources automatically use correct value at each timestep
+
+**New example:**
+- `examples/rc_pulse.sp` — RC circuit with PULSE source showing proper charging/discharging response
+
+**Verified behavior:**
+- V(1) shows PULSE waveform: 0V → 5V transition with proper rise/fall times
+- V(2) shows RC response: exponential charging during pulse, exponential discharge after

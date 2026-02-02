@@ -6,6 +6,7 @@ use spicier_core::netlist::AcDeviceInfo;
 use spicier_core::{Element, NodeId, Stamper};
 
 use crate::stamp::Stamp;
+use crate::waveforms::Waveform;
 
 /// Convert a NodeId to an MNA matrix index (None for ground).
 fn node_to_index(node: NodeId) -> Option<usize> {
@@ -25,14 +26,16 @@ pub struct VoltageSource {
     pub node_pos: NodeId,
     /// Negative terminal node.
     pub node_neg: NodeId,
-    /// DC voltage value in volts.
+    /// DC voltage value in volts (used for DC analysis and AC linearization).
     pub voltage: f64,
     /// Index of the current variable for this source.
     pub current_index: usize,
+    /// Optional time-varying waveform for transient analysis.
+    pub waveform: Option<Waveform>,
 }
 
 impl VoltageSource {
-    /// Create a new voltage source.
+    /// Create a new voltage source with a DC value.
     pub fn new(
         name: impl Into<String>,
         node_pos: NodeId,
@@ -46,7 +49,47 @@ impl VoltageSource {
             node_neg,
             voltage,
             current_index,
+            waveform: None,
         }
+    }
+
+    /// Create a new voltage source with a waveform.
+    pub fn with_waveform(
+        name: impl Into<String>,
+        node_pos: NodeId,
+        node_neg: NodeId,
+        waveform: Waveform,
+        current_index: usize,
+    ) -> Self {
+        let voltage = waveform.dc_value();
+        Self {
+            name: name.into(),
+            node_pos,
+            node_neg,
+            voltage,
+            current_index,
+            waveform: Some(waveform),
+        }
+    }
+
+    /// Get the DC value (for operating point calculation).
+    pub fn dc_value(&self) -> f64 {
+        self.voltage
+    }
+
+    /// Get the value at a specific time (for transient analysis).
+    ///
+    /// Returns the DC value if no waveform is specified.
+    pub fn value_at(&self, time: f64) -> f64 {
+        match &self.waveform {
+            Some(w) => w.value_at(time),
+            None => self.voltage,
+        }
+    }
+
+    /// Check if this source has a time-varying waveform.
+    pub fn is_time_varying(&self) -> bool {
+        self.waveform.is_some()
     }
 }
 
@@ -112,6 +155,13 @@ impl Stamper for VoltageSource {
         let j = node_to_index(self.node_neg);
         mna.stamp_voltage_source(i, j, self.current_index, self.voltage * source_factor);
     }
+
+    fn stamp_at_time(&self, mna: &mut MnaSystem, time: f64) {
+        let i = node_to_index(self.node_pos);
+        let j = node_to_index(self.node_neg);
+        let value = self.value_at(time);
+        mna.stamp_voltage_source(i, j, self.current_index, value);
+    }
 }
 
 /// An independent current source.
@@ -125,17 +175,55 @@ pub struct CurrentSource {
     pub node_neg: NodeId,
     /// DC current value in amperes.
     pub current: f64,
+    /// Optional time-varying waveform for transient analysis.
+    pub waveform: Option<Waveform>,
 }
 
 impl CurrentSource {
-    /// Create a new current source.
+    /// Create a new current source with a DC value.
     pub fn new(name: impl Into<String>, node_pos: NodeId, node_neg: NodeId, current: f64) -> Self {
         Self {
             name: name.into(),
             node_pos,
             node_neg,
             current,
+            waveform: None,
         }
+    }
+
+    /// Create a new current source with a waveform.
+    pub fn with_waveform(
+        name: impl Into<String>,
+        node_pos: NodeId,
+        node_neg: NodeId,
+        waveform: Waveform,
+    ) -> Self {
+        let current = waveform.dc_value();
+        Self {
+            name: name.into(),
+            node_pos,
+            node_neg,
+            current,
+            waveform: Some(waveform),
+        }
+    }
+
+    /// Get the DC value (for operating point calculation).
+    pub fn dc_value(&self) -> f64 {
+        self.current
+    }
+
+    /// Get the value at a specific time (for transient analysis).
+    pub fn value_at(&self, time: f64) -> f64 {
+        match &self.waveform {
+            Some(w) => w.value_at(time),
+            None => self.current,
+        }
+    }
+
+    /// Check if this source has a time-varying waveform.
+    pub fn is_time_varying(&self) -> bool {
+        self.waveform.is_some()
     }
 }
 
@@ -188,6 +276,13 @@ impl Stamper for CurrentSource {
         let i = node_to_index(self.node_pos);
         let j = node_to_index(self.node_neg);
         mna.stamp_current_source(i, j, self.current * source_factor);
+    }
+
+    fn stamp_at_time(&self, mna: &mut MnaSystem, time: f64) {
+        let i = node_to_index(self.node_pos);
+        let j = node_to_index(self.node_neg);
+        let value = self.value_at(time);
+        mna.stamp_current_source(i, j, value);
     }
 }
 

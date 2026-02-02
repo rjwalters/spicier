@@ -223,6 +223,12 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
   - NetlistTransientStamper for per-step circuit assembly from Netlist
   - DC operating point as initial condition, then time-stepping
   - Tabular time-domain output (Time, V(1), V(2), ...)
+- [x] Time-varying sources
+  - PULSE waveform: v1, v2, td, tr, tf, pw, per
+  - SIN waveform: vo, va, freq, td, theta, phase (damped sinusoid)
+  - PWL waveform: arbitrary time-value pairs with linear interpolation
+  - Stamper::stamp_at_time() for time-dependent device stamping
+  - Parser support for PULSE(...), SIN(...), PWL(...) syntax
 
 **Dependencies:** Phase 5
 

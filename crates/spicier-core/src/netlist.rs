@@ -171,6 +171,15 @@ pub trait Stamper: std::fmt::Debug + Send + Sync {
         TransientDeviceInfo::None
     }
 
+    /// Stamp this device at a specific time (for transient analysis).
+    ///
+    /// For time-varying sources (PULSE, SIN, PWL), the source value is
+    /// evaluated at the given time. For DC sources and other devices,
+    /// this is equivalent to `stamp()`.
+    fn stamp_at_time(&self, mna: &mut MnaSystem, _time: f64) {
+        self.stamp(mna);
+    }
+
     /// Whether this device is an independent source (V or I).
     ///
     /// Used by source stepping convergence aid to identify which devices

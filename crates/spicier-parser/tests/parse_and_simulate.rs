@@ -423,7 +423,7 @@ C1 2 0 1u
         netlist: &'a spicier_core::Netlist,
     }
     impl TransientStamper for TranStamper<'_> {
-        fn stamp_static(&self, mna: &mut MnaSystem) {
+        fn stamp_at_time(&self, mna: &mut MnaSystem, _time: f64) {
             for device in self.netlist.devices() {
                 match device.transient_info() {
                     TransientDeviceInfo::Capacitor { .. } => {}
