@@ -596,47 +596,78 @@ spice21 has 87 tests with golden data for ring oscillators and device characteri
 
 ### 11a: API Stability Review
 
-- [ ] Review public API surface for each crate
+- [x] Review public API surface for each crate
   - `spicier-core`: Circuit, Node, MnaSystem, Netlist
   - `spicier-solver`: DC, AC, transient solvers, GMRES, operators
   - `spicier-devices`: Device models, stamps, waveforms
   - `spicier-parser`: Parser, AST types, parse functions
   - `spicier-simd`: SimdCapability, dot products, matvec
-- [ ] Mark internal APIs as `pub(crate)` where appropriate
-- [ ] Ensure `#[non_exhaustive]` on enums that may grow
-- [ ] Stabilize error types and Result patterns
+- [x] Mark internal APIs as `pub(crate)` where appropriate
+- [x] Ensure `#[non_exhaustive]` on enums that may grow
+- [x] Stabilize error types and Result patterns
 
 ### 11b: Documentation
 
-- [ ] Rustdoc for all public types and functions
-- [ ] Crate-level documentation with examples
-- [ ] README.md for each crate
-- [ ] Example programs in `examples/` directories
-- [ ] CHANGELOG.md with version history
+- [x] Rustdoc for all public types and functions
+- [x] Crate-level documentation with examples
+- [x] README.md for each crate
+- [x] Example programs in `examples/` directories
+- [x] CHANGELOG.md with version history
 
 ### 11c: Metadata & Licensing
 
-- [ ] Finalize license (BSD/MIT/Apache-2.0)
-- [ ] Add LICENSE file to repository root
-- [ ] Complete Cargo.toml metadata for each crate:
+- [x] Finalize license (MIT OR Apache-2.0)
+- [x] Add LICENSE-MIT and LICENSE-APACHE files to repository root
+- [x] Complete Cargo.toml metadata for each crate:
   - `license`, `description`, `repository`, `keywords`, `categories`
   - `readme`, `documentation` links
-- [ ] Verify crate names available on crates.io
+- [x] Verify crate names available on crates.io
 
 ### 11d: Quality Checks
 
-- [ ] `cargo clippy` clean (all targets)
-- [ ] `cargo fmt` consistent
-- [ ] `cargo doc` builds without warnings
+- [x] `cargo clippy` clean (all targets)
+- [x] `cargo fmt` consistent
+- [x] `cargo doc` builds without warnings
 - [ ] `cargo publish --dry-run` succeeds for each crate
 - [ ] Minimum Rust version (MSRV) documented and tested
 
 ### 11e: Release Strategy
 
-- [ ] Define version 0.1.0 scope
-- [ ] Determine crate publication order (dependencies first)
+- [x] Define version 0.1.0 scope
+- [x] Determine crate publication order (dependencies first)
 - [ ] Create GitHub release with changelog
 - [ ] Announce on relevant forums (Reddit r/rust, etc.)
+
+#### Publication Order
+
+Crates must be published to crates.io in dependency order. Each level must be fully published before proceeding to the next:
+
+```
+Level 1 (no internal deps):
+  cargo publish -p spicier-core
+  cargo publish -p spicier-simd
+
+Level 2 (depends on Level 1):
+  cargo publish -p spicier-devices    # → core, simd
+
+Level 3 (depends on Level 2):
+  cargo publish -p spicier-solver     # → core, devices, simd
+
+Level 4 (depends on Level 3):
+  cargo publish -p spicier-parser     # → core, devices, solver
+  cargo publish -p spicier-backend-cpu    # → simd, solver
+  cargo publish -p spicier-backend-cuda   # → solver
+  cargo publish -p spicier-backend-metal  # → solver
+
+Level 5 (depends on Level 4):
+  cargo publish -p spicier-cli        # → core, solver, devices, parser
+  cargo publish -p spicier-validate   # → core, parser, solver, devices
+
+Level 6 (umbrella crate - last):
+  cargo publish -p spicier            # → all of the above
+```
+
+**Note:** After publishing each crate, wait for crates.io index to update before publishing dependents (~1-2 minutes).
 
 **Dependencies:** Phase 10 (validation gives confidence for release)
 
