@@ -1,0 +1,24 @@
+[package]
+name = "spicier-batched-sweep"
+description = "Unified GPU-accelerated batched sweep solving for CUDA and Metal backends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["spice", "gpu", "cuda", "metal", "sweep"]
+categories = ["mathematics", "science"]
+
+[features]
+default = []
+cuda = ["dep:spicier-backend-cuda"]
+metal = ["dep:spicier-backend-metal"]
+
+[dependencies]
+spicier-solver.workspace = true
+nalgebra.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+# Optional backend dependencies
+spicier-backend-cuda = { workspace = true, optional = true }
+spicier-backend-metal = { workspace = true, optional = true }
