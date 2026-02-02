@@ -21,9 +21,9 @@ pub mod types;
 mod waveforms;
 
 pub use types::{
-    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, MeasureAnalysis, MeasureType,
-    Measurement, OutputVariable, ParseResult, PrintAnalysisType, PrintCommand, RawElementLine,
-    StatFunc, SubcircuitDefinition, TriggerType,
+    AcSweepType, AnalysisCommand, DcSweepSpec, DcSweepType, InitialCondition, MeasureAnalysis,
+    MeasureType, Measurement, OutputVariable, ParseResult, PrintAnalysisType, PrintCommand,
+    RawElementLine, StatFunc, SubcircuitDefinition, TriggerType,
 };
 
 use types::SubcircuitDefinition as SubcircuitDef;
@@ -1644,5 +1644,90 @@ R1 1 0 {sqrt(A*A + B*B)}
         let result = parse_full(input).unwrap();
         assert_eq!(result.netlist.num_devices(), 1);
         // R should be sqrt(9+16) = sqrt(25) = 5
+    }
+
+    // =========================================================================
+    // .DC PARAM sweep tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_dc_param_sweep() {
+        let input = r#"DC Param Sweep Test
+.PARAM R=1k
+R1 1 0 {R}
+V1 1 0 10
+.DC PARAM R 100 10k 100
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+
+        // Check that a DC analysis was found
+        assert!(result
+            .analyses
+            .iter()
+            .any(|a| matches!(a, super::types::AnalysisCommand::Dc { .. })));
+
+        // Extract the DC sweep spec
+        if let Some(super::types::AnalysisCommand::Dc { sweeps }) =
+            result.analyses.iter().find(|a| matches!(a, super::types::AnalysisCommand::Dc { .. }))
+        {
+            assert_eq!(sweeps.len(), 1);
+            assert_eq!(sweeps[0].source_name.to_uppercase(), "R");
+            assert_eq!(sweeps[0].sweep_type, super::types::DcSweepType::Param);
+            assert!((sweeps[0].start - 100.0).abs() < 1e-10);
+            assert!((sweeps[0].stop - 10000.0).abs() < 1e-10);
+            assert!((sweeps[0].step - 100.0).abs() < 1e-10);
+        } else {
+            panic!("Expected DC analysis command");
+        }
+    }
+
+    #[test]
+    fn test_parse_dc_source_sweep_type() {
+        let input = r#"DC Source Sweep Test
+V1 1 0 5
+R1 1 0 1k
+.DC V1 0 5 1
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+
+        if let Some(super::types::AnalysisCommand::Dc { sweeps }) =
+            result.analyses.iter().find(|a| matches!(a, super::types::AnalysisCommand::Dc { .. }))
+        {
+            assert_eq!(sweeps.len(), 1);
+            assert_eq!(sweeps[0].sweep_type, super::types::DcSweepType::Source);
+        } else {
+            panic!("Expected DC analysis command");
+        }
+    }
+
+    #[test]
+    fn test_parse_dc_nested_param_and_source() {
+        let input = r#"Nested DC Param+Source Sweep
+.PARAM R=1k
+V1 1 0 5
+R1 1 0 {R}
+.DC PARAM R 100 1k 100 V1 0 5 1
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+
+        if let Some(super::types::AnalysisCommand::Dc { sweeps }) =
+            result.analyses.iter().find(|a| matches!(a, super::types::AnalysisCommand::Dc { .. }))
+        {
+            assert_eq!(sweeps.len(), 2);
+            // First sweep is parameter
+            assert_eq!(sweeps[0].sweep_type, super::types::DcSweepType::Param);
+            assert_eq!(sweeps[0].source_name.to_uppercase(), "R");
+            // Second sweep is source
+            assert_eq!(sweeps[1].sweep_type, super::types::DcSweepType::Source);
+            assert_eq!(sweeps[1].source_name.to_uppercase(), "V1");
+        } else {
+            panic!("Expected DC analysis command");
+        }
     }
 }

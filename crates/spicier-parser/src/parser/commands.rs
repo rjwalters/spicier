@@ -14,9 +14,9 @@ use crate::lexer::Token;
 use super::ParamContext;
 
 use super::types::{
-    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, MeasureAnalysis, MeasureType,
-    Measurement, OutputVariable, PrintAnalysisType, PrintCommand, StatFunc, SubcircuitDefinition,
-    TriggerType,
+    AcSweepType, AnalysisCommand, DcSweepSpec, DcSweepType, InitialCondition, MeasureAnalysis,
+    MeasureType, Measurement, OutputVariable, PrintAnalysisType, PrintCommand, StatFunc,
+    SubcircuitDefinition, TriggerType,
 };
 use super::{ModelDefinition, Parser};
 
@@ -74,20 +74,41 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse .DC source start stop step [source2 start2 stop2 step2]
+    /// Also supports .DC PARAM name start stop step for parameter sweeps
     fn parse_dc_command(&mut self, line: usize) -> Result<()> {
         let mut sweeps = Vec::new();
 
         // Parse first (required) sweep specification
-        let source_name = match self.peek() {
+        let (source_name, sweep_type) = match self.peek() {
             Token::Name(n) | Token::Value(n) => {
-                let n = n.clone();
-                self.advance();
-                n
+                let n_upper = n.to_uppercase();
+                if n_upper == "PARAM" {
+                    // .DC PARAM name start stop step
+                    self.advance(); // consume "PARAM"
+                    let param_name = match self.peek() {
+                        Token::Name(pn) | Token::Value(pn) => {
+                            let pn = pn.clone();
+                            self.advance();
+                            pn
+                        }
+                        _ => {
+                            return Err(Error::ParseError {
+                                line,
+                                message: "expected parameter name after .DC PARAM".to_string(),
+                            });
+                        }
+                    };
+                    (param_name, DcSweepType::Param)
+                } else {
+                    let n = n.clone();
+                    self.advance();
+                    (n, DcSweepType::Source)
+                }
             }
             _ => {
                 return Err(Error::ParseError {
                     line,
-                    message: "expected source name for .DC".to_string(),
+                    message: "expected source name or PARAM for .DC".to_string(),
                 });
             }
         };
@@ -101,12 +122,33 @@ impl<'a> Parser<'a> {
             start,
             stop,
             step,
+            sweep_type,
         });
 
         // Check for optional second sweep specification
         if let Token::Name(n) | Token::Value(n) = self.peek() {
-            let source_name2 = n.clone();
-            self.advance();
+            let n_upper = n.to_uppercase();
+            let (source_name2, sweep_type2) = if n_upper == "PARAM" {
+                self.advance(); // consume "PARAM"
+                let param_name = match self.peek() {
+                    Token::Name(pn) | Token::Value(pn) => {
+                        let pn = pn.clone();
+                        self.advance();
+                        pn
+                    }
+                    _ => {
+                        return Err(Error::ParseError {
+                            line,
+                            message: "expected parameter name after .DC PARAM".to_string(),
+                        });
+                    }
+                };
+                (param_name, DcSweepType::Param)
+            } else {
+                let n = n.clone();
+                self.advance();
+                (n, DcSweepType::Source)
+            };
 
             // If we got a second source name, we need all four values
             let start2 = self.expect_value(line)?;
@@ -118,6 +160,7 @@ impl<'a> Parser<'a> {
                 start: start2,
                 stop: stop2,
                 step: step2,
+                sweep_type: sweep_type2,
             });
         }
 

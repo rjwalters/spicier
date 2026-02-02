@@ -24,7 +24,7 @@ pub mod parser;
 
 pub use error::{Error, Result};
 pub use parser::{
-    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, MeasureAnalysis, MeasureType,
-    Measurement, OutputVariable, ParseResult, PrintAnalysisType, PrintCommand, StatFunc,
-    TriggerType, parse, parse_full,
+    AcSweepType, AnalysisCommand, DcSweepSpec, DcSweepType, InitialCondition, MeasureAnalysis,
+    MeasureType, Measurement, OutputVariable, ParseResult, PrintAnalysisType, PrintCommand,
+    StatFunc, TriggerType, parse, parse_full,
 };

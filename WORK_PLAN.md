@@ -1356,16 +1356,16 @@ Level 6 (umbrella crate - last):
 
 **Goal:** Add commonly-requested SPICE features for broader compatibility.
 
-### 12a: .PARAM / Parameter Expressions
+### 12a: .PARAM / Parameter Expressions ✅ COMPLETE
 
 Parameter expressions enable parameterized circuits and design exploration.
 
-- [ ] `.PARAM name = expression` parsing
-- [ ] Parameter substitution in element values
-- [ ] Parameter expressions with math operations
-- [ ] Nested parameter references
-- [ ] Global vs local parameter scoping
-- [ ] Integration with DC sweep (sweep parameter values)
+- [x] `.PARAM name = expression` parsing
+- [x] Parameter substitution in element values
+- [x] Parameter expressions with math operations (+, -, *, /, ^, sqrt, sin, cos, exp, log, etc.)
+- [x] Nested parameter references (`.PARAM R1=1k R2=R1*2`)
+- [x] Global vs local parameter scoping (subcircuit PARAMS: with defaults, instance overrides)
+- [x] Integration with DC sweep (`.DC PARAM name start stop step`)
 
 ### 12b: .MEASURE Statements ✅ COMPLETE
 
@@ -1504,8 +1504,8 @@ Small-signal noise analysis for analog circuit design.
 - [x] Behavioral sources (B elements) — expression AST with voltage/current/time refs, auto-diff for NR
 
 ### Planned (Phase 12)
-- [ ] .PARAM / parameter expressions
-- [ ] .MEASURE statements
+- [x] .PARAM / parameter expressions ✅
+- [x] .MEASURE statements ✅
 - [ ] Noise analysis
 - [x] K element (mutual inductance / coupled inductors / transformers) ✅
 - [x] Q element (BJT — Ebers-Moll model) ✅

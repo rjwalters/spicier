@@ -16,10 +16,25 @@ pub enum AcSweepType {
     Oct,
 }
 
+/// Type of DC sweep variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DcSweepType {
+    /// Sweep a voltage or current source value.
+    Source,
+    /// Sweep a parameter value.
+    Param,
+}
+
+impl Default for DcSweepType {
+    fn default() -> Self {
+        DcSweepType::Source
+    }
+}
+
 /// A single DC sweep specification.
 #[derive(Debug, Clone)]
 pub struct DcSweepSpec {
-    /// Name of the source to sweep.
+    /// Name of the source or parameter to sweep.
     pub source_name: String,
     /// Start value.
     pub start: f64,
@@ -27,6 +42,8 @@ pub struct DcSweepSpec {
     pub stop: f64,
     /// Step size.
     pub step: f64,
+    /// Type of sweep (source or parameter).
+    pub sweep_type: DcSweepType,
 }
 
 /// An analysis command parsed from the netlist.

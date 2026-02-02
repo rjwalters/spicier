@@ -10,9 +10,11 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use spicier_parser::{AnalysisCommand, MeasureAnalysis, Measurement, PrintAnalysisType, parse_full};
+use spicier_parser::{
+    AnalysisCommand, DcSweepType, MeasureAnalysis, Measurement, PrintAnalysisType, parse_full,
+};
 
-use analysis::{run_ac_analysis, run_dc_op, run_dc_sweep, run_transient};
+use analysis::{run_ac_analysis, run_dc_op, run_dc_param_sweep, run_dc_sweep, run_transient};
 use backend::detect_backend;
 
 #[derive(Parser)]
@@ -147,7 +149,20 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
             AnalysisCommand::Dc { sweeps } => {
                 let print_vars = get_print_vars(PrintAnalysisType::Dc);
                 let dc_measurements = get_measurements(MeasureAnalysis::Dc);
-                run_dc_sweep(&netlist, sweeps, &print_vars, &node_map, &dc_measurements)?;
+
+                // Check if this is a parameter sweep
+                let has_param_sweep = sweeps.iter().any(|s| s.sweep_type == DcSweepType::Param);
+
+                if has_param_sweep {
+                    run_dc_param_sweep(
+                        &content,
+                        sweeps,
+                        &print_vars,
+                        &dc_measurements,
+                    )?;
+                } else {
+                    run_dc_sweep(&netlist, sweeps, &print_vars, &node_map, &dc_measurements)?;
+                }
             }
             AnalysisCommand::Ac {
                 sweep_type,
