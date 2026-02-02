@@ -730,25 +730,27 @@ Compute sweep statistics without CPU round-trip.
 
 ---
 
-#### 9b-7: Early Termination for Converged Points
+#### 9b-8: Early Termination for Converged Points ✅
 
 Don't waste compute on already-converged sweep points.
 
-- [ ] Per-point convergence tracking
-  - Boolean mask: converged[batch_idx]
-  - Update after each NR iteration
-- [ ] Compaction or masking
-  - Option A: Compact active points for next iteration
-  - Option B: Mask inactive points (simpler, some wasted compute)
-- [ ] Iteration count limits
+- [x] Per-point convergence tracking
+  - `ConvergenceStatus` enum: Active, Converged, Failed, Singular
+  - `ConvergenceTracker` manages per-point status and iteration counts
+  - Updates after each NR iteration
+- [x] Compaction or masking
+  - Both strategies implemented:
+    - `compact_active()` / `expand_active()` for reducing batch size
+    - `active_mask_u32()` for GPU masking (simpler, some wasted compute)
+- [x] Iteration count limits
   - Per-point iteration counter
   - Mark as failed if limit exceeded
 
-**Acceptance:** 90% converged points at iteration 5 → iteration 6 processes only 10%.
+**Implementation:** `crates/spicier-batched-sweep/src/convergence.rs`
 
 ---
 
-#### 9b-8: Benchmarking & Documentation
+#### 9b-9: Benchmarking & Documentation
 
 Final validation before release.
 

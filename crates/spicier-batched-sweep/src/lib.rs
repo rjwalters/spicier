@@ -38,6 +38,7 @@
 //! println!("Backend: {:?}", result.backend_used);
 //! ```
 
+pub mod convergence;
 mod error;
 pub mod rng;
 mod solver;
@@ -54,6 +55,9 @@ mod mps;
 
 #[cfg(feature = "faer")]
 mod faer_solver;
+
+#[cfg(feature = "faer")]
+mod faer_sparse_solver;
 
 #[cfg(feature = "accelerate")]
 mod accelerate_solver;
@@ -84,6 +88,9 @@ pub use mps::MpsBatchedSolver;
 
 #[cfg(feature = "faer")]
 pub use faer_solver::FaerBatchedSolver;
+
+#[cfg(feature = "faer")]
+pub use faer_sparse_solver::{FaerSparseCachedBatchedSolver, FaerTripletBatchedSolver};
 
 #[cfg(feature = "accelerate")]
 pub use accelerate_solver::AccelerateBatchedSolver;

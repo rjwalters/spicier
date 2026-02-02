@@ -1612,28 +1612,29 @@ Investigated the MOSFET model discrepancy mentioned in work plan ("~20% drain vo
 
 Reorganized WORK_PLAN.md to prioritize GPU optimizations before v0.1.0 release.
 
-**Phase 9b now has 8 numbered sub-tasks:**
-1. **9b-1: Truly Batched MPS Operations** ⬅️ NEXT
+**Phase 9b now has 9 numbered sub-tasks:**
+1. **9b-1: Metal GPU Overhead Reduction** ⬅️ NEXT
    - Investigate MPS batch dimension behavior
    - Parallel command buffer submission
-2. **9b-2: Memory Layout Optimization**
-   - Contiguous batch storage, alignment padding
+2. **9b-2: Truly Batched MPS Operations**
 3. **9b-3: Pipelined Assembly + Solve**
    - Double-buffered batch processing
-4. **9b-4: Shared Sparsity Structure**
+4. **9b-4: Memory Layout Optimization**
+   - Contiguous batch storage, alignment padding
+5. **9b-5: Shared Sparsity Structure**
    - Symbolic caching, value-only updates
-5. **9b-5: GPU-Side RNG**
-   - cuRAND for CUDA, MPSMatrixRandom for Metal
-6. **9b-6: GPU-Side Statistics**
+6. **9b-6: GPU-Side RNG** ✅
+   - Hash-based stateless RNG for GPU parallelism
+7. **9b-7: GPU-Side Statistics**
    - Reduction kernels, histogram, yield analysis
-7. **9b-7: Early Termination**
-   - Per-point convergence tracking
-8. **9b-8: Benchmarking & Documentation**
+8. **9b-8: Early Termination** ✅
+   - Per-point convergence tracking with masking/compaction
+9. **9b-9: Benchmarking & Documentation**
    - Comprehensive benchmarks, README updates
 
 **Phase 11 (Release)** now blocked by Phase 9b completion.
 
-### 9b-5: GPU-Side Random Number Generation
+### 9b-6: GPU-Side Random Number Generation
 
 Implemented hash-based RNG suitable for GPU parallel execution.
 
@@ -1673,3 +1674,77 @@ GpuRngConfig::new(seed)
 - Gaussian statistics (mean ≈ 0, σ ≈ 1)
 - Scaled Gaussian parameters
 - f32 versions for GPU
+
+### 9b-8: Early Termination for Converged Points
+
+Implemented convergence tracking infrastructure for batched Newton-Raphson sweeps. Enables early termination of already-converged sweep points to avoid wasted GPU compute.
+
+**New module: `spicier-batched-sweep/src/convergence.rs`**
+
+**Key types:**
+```rust
+// Per-point convergence status
+enum ConvergenceStatus { Active, Converged, Failed, Singular }
+
+// Manages batch-wide convergence state
+struct ConvergenceTracker {
+    status: Vec<ConvergenceStatus>,
+    iterations: Vec<u32>,
+    max_iterations: u32,
+    active_count: usize,
+}
+
+// Statistics summary
+struct ConvergenceSummary {
+    total: usize,
+    converged: usize,
+    failed: usize,
+    singular: usize,
+    active: usize,
+    iterations: IterationStats,
+}
+```
+
+**Strategies supported:**
+1. **Masking** - GPU-friendly, checks mask before computing
+   - `active_mask_u32()` returns 0/1 mask for shader use
+   - Simple but wastes some compute on inactive points
+2. **Compaction** - Reduces batch size each iteration
+   - `compact_active()` extracts only active points
+   - `expand_active()` restores full batch for output
+   - More complex but eliminates wasted work
+
+**Convergence checking:**
+- `check_convergence()` - Solution change-based (voltage/current deltas)
+- `check_residual_convergence()` - Residual norm-based
+
+**API:**
+```rust
+let mut tracker = ConvergenceTracker::new(batch_size);
+
+// After each NR iteration:
+let newly_converged = tracker.check_convergence(
+    &delta_v, n, abstol, reltol, &solutions
+);
+
+// For next iteration:
+let active = tracker.active_indices();  // Compaction strategy
+let mask = tracker.active_mask_u32();   // Masking strategy
+
+// When all done:
+if tracker.all_finished() {
+    let summary = tracker.summary();
+    println!("Converged: {}/{}", summary.converged, summary.total);
+}
+```
+
+**Tests:** 11 tests covering:
+- Basic tracker creation and status
+- Mark converged/failed transitions
+- Active indices extraction
+- Mask generation for GPU
+- Compact/expand round-trip
+- Solution-based convergence checking
+- Residual-based convergence checking
+- Iteration limit enforcement
+- Summary statistics
