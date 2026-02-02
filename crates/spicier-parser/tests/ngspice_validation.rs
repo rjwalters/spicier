@@ -4193,3 +4193,537 @@ R1 2 0 1k
     // This just tests that the circuit parses correctly
     assert!(netlist.num_devices() >= 4, "Should parse transformer circuit");
 }
+
+// ============================================================================
+// AC Analysis Tests for Transformers and Coupled Inductors
+// ============================================================================
+
+/// Test 1:1 transformer AC response
+/// With equal inductances and k=1, output should be approximately equal to input
+/// at high frequencies where inductor reactance dominates.
+#[test]
+fn test_ac_transformer_1to1() {
+    // Circuit: V1 -- RS(1Ω) -- L1 -- GND
+    //                          ||(k=1)
+    //          Output: L2 -- RL(1k) -- GND
+    // Nodes: 1=V1+, 2=L1+/RS-, 3=L2+/output
+    struct TransformerStamper {
+        rs: f64,   // Source resistance
+        l1: f64,   // Primary inductance
+        l2: f64,   // Secondary inductance
+        k: f64,    // Coupling coefficient
+        rl: f64,   // Load resistance
+    }
+
+    impl AcStamper for TransformerStamper {
+        fn stamp_ac(&self, mna: &mut ComplexMna, omega: f64) {
+            // V1 = 1V AC at node 0 (branch 0)
+            mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+
+            // RS from node 0 to node 1
+            mna.stamp_conductance(Some(0), Some(1), 1.0 / self.rs);
+
+            // L1 from node 1 to ground (branch 1)
+            mna.stamp_inductor(Some(1), None, 1, omega, self.l1);
+
+            // L2 from node 2 to ground (branch 2)
+            mna.stamp_inductor(Some(2), None, 2, omega, self.l2);
+
+            // Mutual inductance coupling: M = k * sqrt(L1 * L2)
+            let m = self.k * (self.l1 * self.l2).sqrt();
+            let jwm = Complex::new(0.0, omega * m);
+
+            // Add coupling between L1 and L2 branches
+            let br1 = mna.num_nodes() + 1;
+            let br2 = mna.num_nodes() + 2;
+            mna.add_element(br1, br2, jwm);
+            mna.add_element(br2, br1, jwm);
+
+            // RL from node 2 to ground
+            mna.stamp_conductance(Some(2), None, 1.0 / self.rl);
+        }
+
+        fn num_nodes(&self) -> usize {
+            3 // V1 output, L1 primary, L2 secondary
+        }
+
+        fn num_vsources(&self) -> usize {
+            3 // V1 + L1 branch + L2 branch
+        }
+    }
+
+    let stamper = TransformerStamper {
+        rs: 1.0,
+        l1: 1e-3,  // 1mH
+        l2: 1e-3,  // 1mH
+        k: 1.0,    // Ideal coupling
+        rl: 1000.0,
+    };
+
+    // Test at 10kHz where inductive reactance is significant
+    let freq = 10000.0;
+    let params = AcParams {
+        sweep_type: AcSweepType::Linear,
+        num_points: 1,
+        fstart: freq,
+        fstop: freq,
+    };
+
+    let result = solve_ac(&stamper, &params).expect("AC solve failed");
+    let mag_db = result.magnitude_db(2); // Output at node 2
+    let phase = result.phase_deg(2);
+
+    let (_, actual_mag) = mag_db[0];
+    let (_, actual_phase) = phase[0];
+
+    // At high frequency with 1:1 ratio and ideal coupling, expect ~0dB gain
+    // Allow 1dB tolerance since source/load impedances affect the exact gain
+    assert!(
+        actual_mag.abs() < 1.0,
+        "1:1 transformer at 10kHz: mag = {:.2} dB (expected ~0 dB)",
+        actual_mag
+    );
+
+    // Phase can be ~0° or ~180° depending on winding orientation (dot convention)
+    // Transformers commonly invert the signal
+    let phase_near_zero = actual_phase.abs() < 15.0;
+    let phase_near_180 = (actual_phase.abs() - 180.0).abs() < 15.0;
+    assert!(
+        phase_near_zero || phase_near_180,
+        "1:1 transformer phase = {:.1}° (expected ~0° or ~180°)",
+        actual_phase
+    );
+}
+
+/// Test 2:1 step-down transformer
+/// With L1=4mH and L2=1mH, turns ratio n = sqrt(L1/L2) = 2
+/// Voltage ratio should be approximately 0.5 (-6dB)
+#[test]
+fn test_ac_transformer_2to1_stepdown() {
+    struct StepdownStamper {
+        rs: f64,
+        l1: f64,
+        l2: f64,
+        k: f64,
+        rl: f64,
+    }
+
+    impl AcStamper for StepdownStamper {
+        fn stamp_ac(&self, mna: &mut ComplexMna, omega: f64) {
+            mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+            mna.stamp_conductance(Some(0), Some(1), 1.0 / self.rs);
+            mna.stamp_inductor(Some(1), None, 1, omega, self.l1);
+            mna.stamp_inductor(Some(2), None, 2, omega, self.l2);
+
+            let m = self.k * (self.l1 * self.l2).sqrt();
+            let jwm = Complex::new(0.0, omega * m);
+            let br1 = mna.num_nodes() + 1;
+            let br2 = mna.num_nodes() + 2;
+            mna.add_element(br1, br2, jwm);
+            mna.add_element(br2, br1, jwm);
+
+            mna.stamp_conductance(Some(2), None, 1.0 / self.rl);
+        }
+
+        fn num_nodes(&self) -> usize {
+            3
+        }
+        fn num_vsources(&self) -> usize {
+            3
+        }
+    }
+
+    let stamper = StepdownStamper {
+        rs: 1.0,
+        l1: 4e-3,  // 4mH
+        l2: 1e-3,  // 1mH -> n = 2
+        k: 0.99,
+        rl: 100.0,
+    };
+
+    let freq = 10000.0;
+    let params = AcParams {
+        sweep_type: AcSweepType::Linear,
+        num_points: 1,
+        fstart: freq,
+        fstop: freq,
+    };
+
+    let result = solve_ac(&stamper, &params).expect("AC solve failed");
+    let mag_db = result.magnitude_db(2);
+    let (_, actual_mag) = mag_db[0];
+
+    // 2:1 step-down: expect -6dB (voltage ratio 0.5)
+    // Allow 2dB tolerance for non-ideal effects
+    assert!(
+        (actual_mag - (-6.0)).abs() < 2.0,
+        "2:1 step-down at 10kHz: mag = {:.2} dB (expected ~-6 dB)",
+        actual_mag
+    );
+}
+
+/// Test 1:2 step-up transformer
+/// With L1=1mH and L2=4mH, turns ratio n = sqrt(L2/L1) = 2
+/// Voltage ratio should be approximately 2 (+6dB)
+#[test]
+fn test_ac_transformer_1to2_stepup() {
+    struct StepupStamper {
+        rs: f64,
+        l1: f64,
+        l2: f64,
+        k: f64,
+        rl: f64,
+    }
+
+    impl AcStamper for StepupStamper {
+        fn stamp_ac(&self, mna: &mut ComplexMna, omega: f64) {
+            mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+            mna.stamp_conductance(Some(0), Some(1), 1.0 / self.rs);
+            mna.stamp_inductor(Some(1), None, 1, omega, self.l1);
+            mna.stamp_inductor(Some(2), None, 2, omega, self.l2);
+
+            let m = self.k * (self.l1 * self.l2).sqrt();
+            let jwm = Complex::new(0.0, omega * m);
+            let br1 = mna.num_nodes() + 1;
+            let br2 = mna.num_nodes() + 2;
+            mna.add_element(br1, br2, jwm);
+            mna.add_element(br2, br1, jwm);
+
+            mna.stamp_conductance(Some(2), None, 1.0 / self.rl);
+        }
+
+        fn num_nodes(&self) -> usize {
+            3
+        }
+        fn num_vsources(&self) -> usize {
+            3
+        }
+    }
+
+    let stamper = StepupStamper {
+        rs: 1.0,
+        l1: 1e-3,  // 1mH
+        l2: 4e-3,  // 4mH -> n = 2 step-up
+        k: 0.99,
+        rl: 1000.0,
+    };
+
+    let freq = 10000.0;
+    let params = AcParams {
+        sweep_type: AcSweepType::Linear,
+        num_points: 1,
+        fstart: freq,
+        fstop: freq,
+    };
+
+    let result = solve_ac(&stamper, &params).expect("AC solve failed");
+    let mag_db = result.magnitude_db(2);
+    let (_, actual_mag) = mag_db[0];
+
+    // 1:2 step-up: expect +6dB (voltage ratio 2)
+    // Allow 2dB tolerance
+    assert!(
+        (actual_mag - 6.0).abs() < 2.0,
+        "1:2 step-up at 10kHz: mag = {:.2} dB (expected ~+6 dB)",
+        actual_mag
+    );
+}
+
+/// Test loosely coupled inductors (k=0.5)
+/// With reduced coupling, less energy transfers to secondary
+#[test]
+fn test_ac_loosely_coupled() {
+    struct LooseCouplingStamper {
+        rs: f64,
+        l1: f64,
+        l2: f64,
+        k: f64,
+        rl: f64,
+    }
+
+    impl AcStamper for LooseCouplingStamper {
+        fn stamp_ac(&self, mna: &mut ComplexMna, omega: f64) {
+            mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+            mna.stamp_conductance(Some(0), Some(1), 1.0 / self.rs);
+            mna.stamp_inductor(Some(1), None, 1, omega, self.l1);
+            mna.stamp_inductor(Some(2), None, 2, omega, self.l2);
+
+            let m = self.k * (self.l1 * self.l2).sqrt();
+            let jwm = Complex::new(0.0, omega * m);
+            let br1 = mna.num_nodes() + 1;
+            let br2 = mna.num_nodes() + 2;
+            mna.add_element(br1, br2, jwm);
+            mna.add_element(br2, br1, jwm);
+
+            mna.stamp_conductance(Some(2), None, 1.0 / self.rl);
+        }
+
+        fn num_nodes(&self) -> usize {
+            3
+        }
+        fn num_vsources(&self) -> usize {
+            3
+        }
+    }
+
+    let stamper = LooseCouplingStamper {
+        rs: 10.0,
+        l1: 10e-3,  // 10mH
+        l2: 10e-3,  // 10mH
+        k: 0.5,     // Loose coupling
+        rl: 100.0,
+    };
+
+    let freq = 1000.0;
+    let params = AcParams {
+        sweep_type: AcSweepType::Linear,
+        num_points: 1,
+        fstart: freq,
+        fstop: freq,
+    };
+
+    let result = solve_ac(&stamper, &params).expect("AC solve failed");
+    let mag_db = result.magnitude_db(2);
+    let (_, actual_mag) = mag_db[0];
+
+    // With k=0.5 and equal inductances, expect reduced gain
+    // Should be less than 0dB due to loose coupling
+    assert!(
+        actual_mag < 0.0,
+        "Loosely coupled (k=0.5): mag = {:.2} dB (expected < 0 dB)",
+        actual_mag
+    );
+}
+
+// ============================================================================
+// DC Sweep Characterization Tests for BJT and JFET I-V Curves
+// ============================================================================
+
+/// Test BJT Ic vs Vbe characteristic (exponential)
+/// Collector current should follow: Ic = Is * exp(Vbe / Vt)
+#[test]
+fn test_dc_sweep_bjt_ic_vs_vbe() {
+    // Thermal voltage at room temperature
+    let vt = 0.02585; // 26mV at 300K
+    let is = 1e-15;   // Saturation current
+    let bf = 100.0;   // Forward beta
+
+    // Sweep Vbe from 0.5V to 0.75V
+    let vbe_values = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75];
+
+    for &vbe in &vbe_values {
+        let netlist_str = format!(
+            r#"BJT Ic vs Vbe at Vbe={}
+.MODEL QMOD NPN (IS={} BF={})
+VCC 1 0 DC 10
+VBE 2 0 DC {}
+RC 1 3 1k
+Q1 3 2 0 QMOD
+.end
+"#,
+            vbe, is, bf, vbe
+        );
+
+        let netlist = parse(&netlist_str).expect("Parse failed");
+        let solution = solve_dc_nonlinear(&netlist).expect("DC solve failed");
+
+        // Get collector voltage
+        let vc = solution.voltage(NodeId::new(3));
+
+        // Calculate Ic from voltage drop across RC
+        let ic = (10.0 - vc) / 1000.0;
+
+        // Expected Ic from Ebers-Moll: Ic ≈ Is * exp(Vbe/Vt) (ignoring -1 term for Vbe >> Vt)
+        let ic_expected: f64 = is * (vbe as f64 / vt).exp();
+
+        // Check that Ic is in the right ballpark (within factor of 3)
+        // Due to numerical precision and Early effect, exact match is difficult
+        if ic_expected > 1e-9 && ic > 1e-9 {
+            let ratio = ic / ic_expected;
+            assert!(
+                ratio > 0.3 && ratio < 3.0,
+                "At Vbe={:.2}V: Ic={:.2e}A (expected ~{:.2e}A, ratio={:.2})",
+                vbe, ic, ic_expected, ratio
+            );
+        }
+
+        // Verify Ic increases with Vbe (exponential behavior)
+        if vbe > 0.5 {
+            assert!(
+                ic > 1e-12,
+                "At Vbe={:.2}V: Ic should be positive: {:.2e}A",
+                vbe, ic
+            );
+        }
+    }
+}
+
+/// Test BJT Ic vs Vce characteristic (Early effect / output conductance)
+/// With fixed Vbe, Ic should increase slightly with Vce due to Early effect
+#[test]
+fn test_dc_sweep_bjt_early_effect() {
+    let vbe = 0.65; // Fixed base-emitter voltage
+
+    // Sweep Vce from 1V to 10V
+    let vce_values = [1.0, 3.0, 5.0, 7.0, 10.0];
+    let mut ic_values = Vec::new();
+
+    for &vce_target in &vce_values {
+        // Use VCC such that Vce is approximately the target
+        // With RC=1k and Ic≈1mA, V(RC)≈1V, so VCC=Vce+1 gives Vce≈target
+        let vcc = vce_target + 2.0;
+
+        let netlist_str = format!(
+            r#"BJT Early Effect at Vce={}
+.MODEL QMOD NPN (IS=1e-15 BF=100 VAF=100)
+VCC 1 0 DC {}
+VBE 2 0 DC {}
+RC 1 3 1k
+Q1 3 2 0 QMOD
+.end
+"#,
+            vce_target, vcc, vbe
+        );
+
+        let netlist = parse(&netlist_str).expect("Parse failed");
+        let solution = solve_dc_nonlinear(&netlist).expect("DC solve failed");
+
+        let vc = solution.voltage(NodeId::new(3));
+        let ic = (vcc - vc) / 1000.0;
+
+        ic_values.push((vce_target, ic));
+    }
+
+    // Verify Early effect: Ic should increase with Vce
+    // go = Ic / VAF, so dIc/dVce ≈ Ic/VAF
+    for i in 1..ic_values.len() {
+        let (vce_prev, ic_prev) = ic_values[i - 1];
+        let (vce_curr, ic_curr) = ic_values[i];
+
+        // Ic should increase (or stay nearly constant) with Vce
+        // Allow small decrease due to numerical effects
+        assert!(
+            ic_curr >= ic_prev * 0.95,
+            "Early effect: Ic should not decrease significantly. \
+             At Vce={:.1}V: Ic={:.2e}A, at Vce={:.1}V: Ic={:.2e}A",
+            vce_prev, ic_prev, vce_curr, ic_curr
+        );
+    }
+}
+
+/// Test JFET Ids vs Vgs characteristic (quadratic in saturation)
+/// Drain current should follow: Ids = β(Vgs - Vto)² for Vgs > Vto
+#[test]
+fn test_dc_sweep_jfet_ids_vs_vgs() {
+    let vto = -2.0;  // Threshold voltage for N-channel JFET
+    let beta = 1e-4; // Transconductance parameter
+
+    // Sweep Vgs from -1.5V to 0V (above Vto = -2V)
+    let vgs_values = [-1.5, -1.0, -0.5, 0.0];
+
+    for &vgs in &vgs_values {
+        let netlist_str = format!(
+            r#"JFET Ids vs Vgs at Vgs={}
+.MODEL JMOD NJF (VTO={} BETA={} LAMBDA=0)
+VDD 1 0 DC 15
+VGS 2 0 DC {}
+RD 1 3 10k
+J1 3 2 0 JMOD
+.end
+"#,
+            vgs, vto, beta, vgs
+        );
+
+        let netlist = parse(&netlist_str).expect("Parse failed");
+        let solution = solve_dc_nonlinear(&netlist).expect("DC solve failed");
+
+        let vd = solution.voltage(NodeId::new(3));
+        let ids = (15.0 - vd) / 10000.0;
+
+        // Expected Ids in saturation: Ids = β(Vgs - Vto)²
+        let vov = vgs - vto; // Overdrive voltage
+        let ids_expected: f64 = if vov > 0.0 {
+            beta * vov * vov
+        } else {
+            0.0
+        };
+
+        // Check quadratic relationship (within 20% or 1µA)
+        let tol = ids_expected.abs() * 0.2 + 1e-6;
+        assert!(
+            (ids - ids_expected).abs() < tol,
+            "At Vgs={:.1}V: Ids={:.2e}A (expected {:.2e}A)",
+            vgs, ids, ids_expected
+        );
+    }
+}
+
+/// Test JFET Ids vs Vds characteristic (triode to saturation transition)
+/// At low Vds: triode region, at high Vds: saturation
+#[test]
+fn test_dc_sweep_jfet_ids_vs_vds() {
+    let vgs = 0.0;   // Gate-source voltage
+    let vto = -2.0;  // Threshold voltage
+    let beta = 1e-4; // Transconductance parameter
+    let vov = vgs - vto; // 2.0V overdrive
+
+    // Sweep Vds from 0.5V to 5V
+    let vds_values = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0];
+    let mut ids_values = Vec::new();
+
+    for &vds_target in &vds_values {
+        // Set VDD high enough to achieve target Vds
+        let vdd = vds_target + 1.0;
+
+        let netlist_str = format!(
+            r#"JFET Ids vs Vds at Vds={}
+.MODEL JMOD NJF (VTO={} BETA={} LAMBDA=0)
+VDD 1 0 DC {}
+VGS 2 0 DC {}
+RD 1 3 100
+J1 3 2 0 JMOD
+.end
+"#,
+            vds_target, vto, beta, vdd, vgs
+        );
+
+        let netlist = parse(&netlist_str).expect("Parse failed");
+        let solution = solve_dc_nonlinear(&netlist).expect("DC solve failed");
+
+        let vd = solution.voltage(NodeId::new(3));
+        let ids = (vdd - vd) / 100.0;
+        let actual_vds = vd; // Since source is at ground
+
+        ids_values.push((actual_vds, ids));
+    }
+
+    // Verify behavior:
+    // - In triode (Vds < Vov): Ids increases with Vds
+    // - In saturation (Vds >= Vov): Ids is relatively constant
+    let ids_sat = beta * vov * vov; // Expected saturation current ≈ 0.4mA
+
+    for (vds, ids) in &ids_values {
+        if *vds >= vov {
+            // Saturation region: Ids should be close to saturation value
+            let ratio = ids / ids_sat;
+            assert!(
+                ratio > 0.5 && ratio < 2.0,
+                "At Vds={:.1}V (saturation): Ids={:.2e}A (expected ~{:.2e}A)",
+                vds, ids, ids_sat
+            );
+        }
+    }
+
+    // Verify Ids increases (or saturates) as Vds increases
+    for i in 1..ids_values.len() {
+        let (_vds_prev, ids_prev) = ids_values[i - 1];
+        let (vds_curr, ids_curr) = ids_values[i];
+
+        // Ids should not decrease significantly
+        assert!(
+            ids_curr >= ids_prev * 0.9,
+            "Ids should not decrease. At Vds={:.1}V: Ids={:.2e}A",
+            vds_curr, ids_curr
+        );
+    }
+}

@@ -274,6 +274,84 @@ impl AcStamper for NetlistAcStamper<'_> {
                         }
                     }
                 }
+                AcDeviceInfo::MutualInductance {
+                    l1_branch_idx,
+                    l2_branch_idx,
+                    mutual_inductance,
+                } => {
+                    // Mutual inductance coupling between two inductors.
+                    // The coupled inductor equations are:
+                    //   V1 = jωL1 * I1 + jωM * I2
+                    //   V2 = jωM * I1 + jωL2 * I2
+                    //
+                    // The individual inductors already stamp jωL on the diagonal.
+                    // Here we add the off-diagonal coupling terms jωM.
+                    let jwm = Complex::new(0.0, omega * mutual_inductance);
+                    let br1 = mna.num_nodes() + l1_branch_idx;
+                    let br2 = mna.num_nodes() + l2_branch_idx;
+
+                    // Add jωM coupling: L1 branch depends on L2 current and vice versa
+                    mna.add_element(br1, br2, jwm);
+                    mna.add_element(br2, br1, jwm);
+                }
+                AcDeviceInfo::Jfet {
+                    drain,
+                    gate,
+                    source,
+                    gds,
+                    gm,
+                } => {
+                    // JFET small-signal model (same structure as MOSFET):
+                    // 1. gds conductance between drain and source
+                    mna.stamp_conductance(drain, source, gds);
+
+                    // 2. gm transconductance: current gm*Vgs from drain to source
+                    if let Some(d) = drain {
+                        if let Some(g) = gate {
+                            mna.add_element(d, g, Complex::new(gm, 0.0));
+                        }
+                        if let Some(s) = source {
+                            mna.add_element(d, s, Complex::new(-gm, 0.0));
+                        }
+                    }
+                    if let Some(s) = source {
+                        if let Some(g) = gate {
+                            mna.add_element(s, g, Complex::new(-gm, 0.0));
+                        }
+                        mna.add_element(s, s, Complex::new(gm, 0.0));
+                    }
+                }
+                AcDeviceInfo::Bjt {
+                    collector,
+                    base,
+                    emitter,
+                    gm,
+                    gpi,
+                    go,
+                } => {
+                    // BJT hybrid-π small-signal model:
+                    // 1. gpi conductance between base and emitter (input resistance)
+                    mna.stamp_conductance(base, emitter, gpi);
+
+                    // 2. go conductance between collector and emitter (output resistance)
+                    mna.stamp_conductance(collector, emitter, go);
+
+                    // 3. gm transconductance: current gm*Vbe from collector to emitter
+                    if let Some(c) = collector {
+                        if let Some(b) = base {
+                            mna.add_element(c, b, Complex::new(gm, 0.0));
+                        }
+                        if let Some(e) = emitter {
+                            mna.add_element(c, e, Complex::new(-gm, 0.0));
+                        }
+                    }
+                    if let Some(e) = emitter {
+                        if let Some(b) = base {
+                            mna.add_element(e, b, Complex::new(-gm, 0.0));
+                        }
+                        mna.add_element(e, e, Complex::new(gm, 0.0));
+                    }
+                }
                 AcDeviceInfo::None | _ => {}
             }
         }

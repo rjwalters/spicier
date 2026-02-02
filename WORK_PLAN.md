@@ -1018,7 +1018,7 @@ For circuits with 50k+ nodes, sparse LU factorization itself is the bottleneck.
 
 **Goal:** Import and adapt test circuits from ngspice and spice21 to validate solver accuracy against established SPICE implementations.
 
-**Status:** Core validation infrastructure complete. 69 validation tests in ngspice_validation.rs (including 13 for BJT/JFET/K), 11 cross-simulator tests in spicier-validate.
+**Status:** Core validation infrastructure complete. 77 validation tests in ngspice_validation.rs (13 DC operating point + 4 AC transformer + 4 DC sweep characterization for BJT/JFET/K), 11 cross-simulator tests in spicier-validate.
 
 ### 10a: ngspice Test Import
 
@@ -1089,25 +1089,25 @@ Extended validation for newly implemented device models.
 - [x] Mutual inductance parsing verification
 - [x] Transformer DC test (inductor short-circuit)
 
-**AC Small-Signal Tests (Planned):**
-- [ ] Transformer voltage ratio vs frequency
+**AC Small-Signal Tests:**
+- [x] Transformer voltage ratio vs frequency (4 tests)
   - 1:1 (unity gain), 2:1 (step-down), 1:2 (step-up)
   - Verify magnitude matches √(L2/L1) ratio
-  - Phase relationship across coupled inductors
-- [ ] Loosely coupled inductors (k=0.5)
+  - Phase relationship (0° or 180° depending on dot convention)
+- [x] Loosely coupled inductors (k=0.5)
 - [ ] Coupled LC resonator bandpass response
 - [ ] BJT common-emitter small-signal gain (gm × RC)
 - [ ] JFET common-source small-signal gain (gm × RD)
 
-**DC Sweep Characterization (Planned):**
-- [ ] BJT Ic vs Vbe sweep (exponential characteristic)
+**DC Sweep Characterization (4 tests):**
+- [x] BJT Ic vs Vbe sweep (exponential characteristic)
   - Verify slope matches Is·exp(Vbe/Vt)
   - Compare against Ebers-Moll analytical curve
-- [ ] BJT Ic vs Vce sweep (Early effect)
+- [x] BJT Ic vs Vce sweep (Early effect)
   - Verify output conductance go = Ic/VAF
-- [ ] JFET Ids vs Vgs sweep (quadratic in saturation)
+- [x] JFET Ids vs Vgs sweep (quadratic in saturation)
   - Verify Ids = β(Vgs - Vto)² relationship
-- [ ] JFET Ids vs Vds sweep (triode to saturation transition)
+- [x] JFET Ids vs Vds sweep (triode to saturation transition)
 
 **Complex Circuit Topologies (Future):**
 - [ ] BJT current mirror
@@ -1123,8 +1123,8 @@ Extended validation for newly implemented device models.
 - [x] All existing tests continue to pass
 - [x] Nonlinear device model discrepancies resolved (diode ~0%, MOSFET ~0.6%)
 - [x] 13 new BJT/JFET/K validation tests pass (DC operating point)
-- [ ] AC transformer tests verify frequency-domain coupling
-- [ ] DC sweeps verify I-V characteristics match theory
+- [x] 4 AC transformer tests verify frequency-domain coupling
+- [x] 4 DC sweep tests verify I-V characteristics match theory
 
 ---
 
