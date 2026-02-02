@@ -5,6 +5,8 @@ use nalgebra::DVector;
 use spicier_batched_sweep::{solve_batched_sweep_gpu, BackendSelector, BackendType};
 #[cfg(any(feature = "metal", feature = "faer", feature = "accelerate"))]
 use spicier_batched_sweep::GpuBatchConfig;
+#[cfg(feature = "faer")]
+use spicier_batched_sweep::{FaerBatchedSolver, FaerSparseCachedBatchedSolver, BatchedLuSolver};
 use spicier_solver::{
     ConvergenceCriteria, DispatchConfig, MonteCarloGenerator, ParameterVariation, SweepStamper,
     SweepStamperFactory,
@@ -149,6 +151,27 @@ fn run_metal_sweep(batch_size: usize, matrix_size: usize) {
         .unwrap();
 }
 
+#[cfg(feature = "mps")]
+fn run_mps_sweep(batch_size: usize, matrix_size: usize) {
+    let factory = DividerFactory::new(matrix_size);
+    let generator = MonteCarloGenerator::new(batch_size).with_seed(42);
+    let variations = vec![
+        ParameterVariation::new("R1", 1000.0)
+            .with_bounds(500.0, 1500.0)
+            .with_sigma(0.1),
+    ];
+    let criteria = ConvergenceCriteria::default();
+    let config = DispatchConfig::default();
+    let backend = BackendSelector::prefer_mps().with_config(GpuBatchConfig {
+        min_batch_size: 1,
+        min_matrix_size: 1,
+        max_batch_per_launch: 65535,
+    });
+
+    let _ = solve_batched_sweep_gpu(&backend, &factory, &generator, &variations, &criteria, &config)
+        .unwrap();
+}
+
 fn bench_sweep_backends(c: &mut Criterion) {
     let mut group = c.benchmark_group("batched_sweep");
     group.sample_size(20);
@@ -217,10 +240,125 @@ fn bench_sweep_backends(c: &mut Criterion) {
                 }
             }
         }
+
+        // MPS benchmark (if available, macOS only with Apple Silicon)
+        #[cfg(feature = "mps")]
+        {
+            let mps_backend = BackendSelector::prefer_mps().with_config(GpuBatchConfig {
+                min_batch_size: 1,
+                min_matrix_size: 1,
+                max_batch_per_launch: 65535,
+            });
+
+            if let Ok(solver) = mps_backend.create_solver() {
+                if solver.backend_type() == BackendType::Mps {
+                    group.bench_with_input(BenchmarkId::new("MPS", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
+                        b.iter(|| run_mps_sweep(bs, ms))
+                    });
+                }
+            }
+        }
     }
 
     group.finish();
 }
 
+/// Benchmark comparing dense vs sparse cached faer solvers directly.
+///
+/// This benchmark isolates the LU solve operation to measure the benefit of
+/// symbolic factorization caching in sparse matrices.
+#[cfg(feature = "faer")]
+fn bench_dense_vs_sparse_cached(c: &mut Criterion) {
+    let mut group = c.benchmark_group("faer_dense_vs_sparse_cached");
+    group.sample_size(50);
+
+    // Test configurations: (batch_size, matrix_size, sparsity_percent)
+    // Sparsity matters - sparse solver benefits when matrices are sparse
+    let configs = [
+        (100, 20),
+        (100, 50),
+        (500, 20),
+        (500, 50),
+        (1000, 20),
+        (1000, 50),
+    ];
+
+    for (batch_size, n) in configs {
+        let param = format!("{}batches_{}x{}", batch_size, n, n);
+
+        // Generate diagonally-dominant sparse matrices
+        // Tridiagonal pattern (very sparse) with some fill
+        let mut matrices = Vec::with_capacity(batch_size * n * n);
+        let mut rhs = Vec::with_capacity(batch_size * n);
+
+        for batch_idx in 0..batch_size {
+            // Create a sparse matrix in column-major order
+            for col in 0..n {
+                for row in 0..n {
+                    let val = if row == col {
+                        10.0 + (batch_idx as f64) * 0.001 // Diagonal: dominant
+                    } else if (row as i32 - col as i32).abs() == 1 {
+                        -1.0 // Sub/super diagonal
+                    } else {
+                        0.0 // Off-diagonal (sparse)
+                    };
+                    matrices.push(val);
+                }
+            }
+            // RHS vector
+            for i in 0..n {
+                rhs.push((i + 1) as f64);
+            }
+        }
+
+        // Dense Faer benchmark
+        let dense_solver = FaerBatchedSolver::new(GpuBatchConfig::default());
+        group.bench_with_input(
+            BenchmarkId::new("faer-dense", &param),
+            &(batch_size, n),
+            |b, &(bs, sz)| {
+                b.iter(|| {
+                    dense_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap()
+                })
+            },
+        );
+
+        // Sparse cached Faer benchmark
+        let sparse_solver = FaerSparseCachedBatchedSolver::new(GpuBatchConfig::default());
+        group.bench_with_input(
+            BenchmarkId::new("faer-sparse-cached", &param),
+            &(batch_size, n),
+            |b, &(bs, sz)| {
+                // Reset cache before each iteration to measure cold + warm behavior
+                sparse_solver.reset_cache();
+                b.iter(|| {
+                    sparse_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap()
+                })
+            },
+        );
+
+        // Sparse cached with warm cache (only numeric factorization)
+        // Pre-warm the cache
+        let _ = sparse_solver.solve_batch(&matrices, &rhs, n, batch_size);
+        group.bench_with_input(
+            BenchmarkId::new("faer-sparse-cached-warm", &param),
+            &(batch_size, n),
+            |b, &(bs, sz)| {
+                // Cache is already warm, measure pure numeric factorization
+                b.iter(|| {
+                    sparse_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap()
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
+#[cfg(feature = "faer")]
+criterion_group!(benches, bench_sweep_backends, bench_dense_vs_sparse_cached);
+
+#[cfg(not(feature = "faer"))]
 criterion_group!(benches, bench_sweep_backends);
+
 criterion_main!(benches);

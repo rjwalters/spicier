@@ -16,3 +16,10 @@ accelerate = []
 
 [dependencies]
 num-complex.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "simd_benchmark"
+harness = false

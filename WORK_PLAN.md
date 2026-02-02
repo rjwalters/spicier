@@ -1036,11 +1036,140 @@ Small-signal noise analysis for analog circuit design.
 
 ### 12d: Additional Device Models
 
-- [ ] BJT (Gummel-Poon model)
-- [ ] JFET
-- [ ] BSIM3v3 MOSFET
-- [ ] BSIM4 MOSFET (partial — complex model)
-- [ ] Transmission lines (lossless, lossy)
+#### K Element — Mutual Inductance (Coupled Inductors / Transformers)
+
+Mutual inductance is essential for modeling transformers, coupled filters, and RF circuits.
+
+**Parser support:**
+- [ ] `K<name> L1 L2 <coupling_coefficient>` syntax
+- [ ] Multi-winding support: `K<name> L1 L2 L3 ... <k>`
+- [ ] Coupling coefficient validation (0 < k ≤ 1)
+- [ ] Reference to existing inductor elements by name
+
+**Device model:**
+- [ ] `CoupledInductors` struct holding L1, L2, and mutual inductance M = k√(L1·L2)
+- [ ] Support for both 2-winding and n-winding transformers
+- [ ] Error checking: referenced inductors must exist in netlist
+
+**DC analysis:**
+- [ ] Short-circuit model (same as individual inductors)
+
+**AC analysis (small-signal):**
+- [ ] Coupled impedance matrix: Z = jω[L1, M; M, L2]
+- [ ] Stamp mutual terms: Y12 = Y21 = -1/(jωM) contribution
+- [ ] Handle ideal transformer limit (k=1) carefully
+
+**Transient analysis:**
+- [ ] Companion model for coupled inductors
+- [ ] v1 = L1·di1/dt + M·di2/dt
+- [ ] v2 = M·di1/dt + L2·di2/dt
+- [ ] Trapezoidal discretization for coupled equations
+- [ ] Current source companion with history terms
+
+**Validation tests:**
+- [ ] Ideal transformer (k≈1): voltage ratio = N1/N2 = √(L1/L2)
+- [ ] Loosely coupled inductors (k=0.5): partial energy transfer
+- [ ] Coupled resonant filter (bandpass with coupled inductors)
+- [ ] Transformer with center tap (3-winding)
+
+#### Q Element — BJT (Bipolar Junction Transistor)
+
+BJTs are fundamental for analog amplifier design and legacy circuits.
+
+**Parser support:**
+- [ ] `Q<name> <collector> <base> <emitter> <model>` (NPN/PNP)
+- [ ] Optional substrate node: `Q<name> C B E [S] <model>`
+- [ ] `.MODEL <name> NPN/PNP (parameters...)` parsing
+- [ ] Key Gummel-Poon parameters: IS, BF, BR, NF, NR, VAF, VAR, IKF, IKR, ISE, ISC, NE, NC, RB, RE, RC, CJE, CJC, TF, TR
+
+**Device model (Ebers-Moll / Gummel-Poon):**
+- [ ] `Bjt` struct with model parameters and operating region
+- [ ] Forward current: Ic = IS·(exp(Vbe/Vt) - 1) / (1 + Vbc/VAF)
+- [ ] Reverse current: Ie = IS·(exp(Vbc/Vt) - 1) / BF
+- [ ] Base current: Ib = Ic/BF + Ie/BR + recombination currents
+- [ ] Early effect (output conductance): go = Ic/VA
+- [ ] High-injection effects (IKF, IKR roll-off)
+- [ ] Region detection: cutoff, forward active, reverse active, saturation
+
+**DC analysis (Newton-Raphson):**
+- [ ] Nonlinear BJT stamper with convergence aids
+- [ ] Gmin stepping for difficult convergence
+- [ ] Current limiting (Vbe < 0.8V clamp)
+- [ ] Junction voltage limiting similar to diode
+
+**AC analysis (small-signal):**
+- [ ] Hybrid-π model linearization at operating point
+- [ ] gm = Ic/Vt (transconductance)
+- [ ] rπ = BF/gm (input resistance)
+- [ ] ro = VA/Ic (output resistance)
+- [ ] Cπ = τF·gm + CJE (base-emitter capacitance)
+- [ ] Cμ = CJC (Miller capacitance)
+
+**Transient analysis:**
+- [ ] Charge-based model: Qbe, Qbc junction charges
+- [ ] Diffusion capacitance: τF, τR transit times
+- [ ] Depletion capacitance: CJE, CJC with grading
+- [ ] Companion model with charge storage
+
+**Validation tests (from SpiceSharp patterns):**
+- [ ] Common-emitter amplifier: voltage gain ≈ -gm·Rc
+- [ ] Emitter follower: voltage gain ≈ 1, low output impedance
+- [ ] Current mirror: Iout/Iin ratio accuracy
+- [ ] Differential pair: common-mode rejection
+- [ ] BJT DC sweep: Ic vs Vce family of curves
+- [ ] BJT AC response: fT (transition frequency)
+- [ ] Class A/B output stage: crossover distortion
+
+#### J Element — JFET (Junction Field-Effect Transistor)
+
+JFETs are used in low-noise amplifiers and high-impedance input stages.
+
+**Parser support:**
+- [ ] `J<name> <drain> <gate> <source> <model>` syntax
+- [ ] `.MODEL <name> NJF/PJF (parameters...)` parsing
+- [ ] Shichman-Hodges parameters: VTO, BETA, LAMBDA, IS, RD, RS, CGS, CGD
+
+**Device model (Shichman-Hodges):**
+- [ ] `Jfet` struct with model parameters
+- [ ] Pinch-off voltage VTO (typically negative for N-channel)
+- [ ] Drain current equations:
+  - Cutoff (Vgs < Vto): Id = 0
+  - Linear (Vds < Vgs - Vto): Id = β·(2·(Vgs-Vto)·Vds - Vds²)·(1 + λ·Vds)
+  - Saturation (Vds ≥ Vgs - Vto): Id = β·(Vgs - Vto)²·(1 + λ·Vds)
+- [ ] Gate leakage current: Ig = IS·(exp(Vgs/Vt) - 1)
+- [ ] Symmetric JFET handling for drain/source interchange
+
+**DC analysis:**
+- [ ] Nonlinear JFET stamper with region detection
+- [ ] Limiting similar to MOSFET for convergence
+
+**AC analysis (small-signal):**
+- [ ] gm = 2·β·(Vgs - Vto)·(1 + λ·Vds) (transconductance)
+- [ ] gds = λ·Id (output conductance)
+- [ ] CGS, CGD capacitances (constant for Shichman-Hodges)
+
+**Transient analysis:**
+- [ ] Companion model with gate capacitances
+- [ ] Charge-based model for CGS, CGD
+
+**Validation tests:**
+- [ ] JFET common-source amplifier: gain = -gm·Rd
+- [ ] JFET source follower: gain ≈ 1
+- [ ] JFET current source: constant current with high output impedance
+- [ ] JFET DC sweep: Id vs Vds family of curves
+- [ ] JFET as voltage-controlled resistor (triode region)
+
+#### Advanced MOSFET Models
+
+- [ ] BSIM3v3 MOSFET — industry-standard short-channel model
+- [ ] BSIM4 MOSFET (partial) — complex model with quantum effects
+- [ ] Parameter extraction from foundry model files
+
+#### Transmission Lines
+
+- [ ] Lossless transmission line (T element): delay-based model
+- [ ] Lossy transmission line: RLGC model with skin effect
+- [ ] Coupled transmission lines: crosstalk modeling
 
 **Dependencies:** Core functionality complete
 
@@ -1056,7 +1185,11 @@ Small-signal noise analysis for analog circuit design.
 - [ ] .PARAM / parameter expressions
 - [ ] .MEASURE statements
 - [ ] Noise analysis
+- [ ] K element (mutual inductance / coupled inductors / transformers)
+- [ ] Q element (BJT — Gummel-Poon model)
+- [ ] J element (JFET — Shichman-Hodges model)
 - [ ] Additional MOSFET models (BSIM3/BSIM4)
+- [ ] Transmission lines (lossless, lossy)
 
 ### Long-term / Research
 - S-parameter analysis

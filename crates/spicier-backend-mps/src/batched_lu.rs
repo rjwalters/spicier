@@ -11,9 +11,7 @@ mod macos {
     use objc2::runtime::ProtocolObject;
     use objc2::AllocAnyThread;
     use objc2_foundation::NSUInteger;
-    use objc2_metal::{MTLBuffer, MTLCommandBuffer, MTLDevice, MTLResourceOptions};
-    // MTLCommandQueue trait is needed for commandBuffer() method
-    use objc2_metal::MTLCommandQueue as _;
+    use objc2_metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLResourceOptions};
     use objc2_metal_performance_shaders::{
         MPSDataType, MPSMatrix, MPSMatrixDecompositionLU, MPSMatrixDescriptor, MPSMatrixSolveLU,
     };
@@ -211,111 +209,49 @@ mod macos {
             n: usize,
             batch_size: usize,
         ) -> Result<(Vec<f32>, Vec<usize>)> {
-            use objc2_metal::MTLCommandQueue;
+            // MPS's MPSMatrixDecompositionLU doesn't support true batching - it operates
+            // on one matrix at a time. However, we can achieve parallelism by:
+            // 1. Encoding all operations into separate command buffers
+            // 2. Committing all buffers before waiting
+            // 3. The GPU command scheduler can then overlap execution
 
             let device = self.ctx.device();
             let queue = self.ctx.command_queue();
 
             let n_u = n as NSUInteger;
-            let batch_u = batch_size as NSUInteger;
             let element_size = std::mem::size_of::<f32>() as NSUInteger;
             let row_bytes = n_u * element_size;
-            let matrix_bytes = n_u * row_bytes;
-            let rhs_row_bytes = element_size; // Single column vector
-            let rhs_matrix_bytes = n_u * rhs_row_bytes;
+            let rhs_bytes = n_u * element_size;
 
-            // Create BATCHED matrix descriptors - this is the key to parallel processing
+            // Create single-matrix descriptors (reused for all matrices)
             let matrix_desc = unsafe {
-                MPSMatrixDescriptor::matrixDescriptorWithRows_columns_matrices_rowBytes_matrixBytes_dataType(
+                MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
                     n_u,
                     n_u,
-                    batch_u,
                     row_bytes,
-                    matrix_bytes,
                     MPSDataType::Float32,
                 )
             };
 
-            // RHS is batch_size vectors, each of length n (stored as n×1 matrices)
             let rhs_desc = unsafe {
-                MPSMatrixDescriptor::matrixDescriptorWithRows_columns_matrices_rowBytes_matrixBytes_dataType(
+                MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
                     n_u,
                     1,
-                    batch_u,
-                    rhs_row_bytes,
-                    rhs_matrix_bytes,
+                    element_size,
                     MPSDataType::Float32,
                 )
             };
 
-            // Pivot indices: n pivots per matrix × batch_size matrices
             let pivot_desc = unsafe {
-                MPSMatrixDescriptor::matrixDescriptorWithRows_columns_matrices_rowBytes_matrixBytes_dataType(
+                MPSMatrixDescriptor::matrixDescriptorWithRows_columns_rowBytes_dataType(
                     n_u,
                     1,
-                    batch_u,
                     std::mem::size_of::<u32>() as NSUInteger,
-                    n_u * std::mem::size_of::<u32>() as NSUInteger,
                     MPSDataType::UInt32,
                 )
             };
 
-            // Create buffers for ALL matrices at once
-            let matrix_buffer =
-                create_buffer(device, matrices, MTLResourceOptions::StorageModeShared)?;
-            let rhs_buffer =
-                create_buffer(device, rhs, MTLResourceOptions::StorageModeShared)?;
-
-            let total_solution_bytes = (batch_size * n * std::mem::size_of::<f32>()) as NSUInteger;
-            let solution_buffer = device
-                .newBufferWithLength_options(total_solution_bytes, MTLResourceOptions::StorageModeShared)
-                .ok_or_else(|| MpsError::Buffer("Failed to create solution buffer".into()))?;
-
-            let total_pivot_bytes = (batch_size * n * std::mem::size_of::<u32>()) as NSUInteger;
-            let pivot_buffer = device
-                .newBufferWithLength_options(total_pivot_bytes, MTLResourceOptions::StorageModeShared)
-                .ok_or_else(|| MpsError::Buffer("Failed to create pivot buffer".into()))?;
-
-            // Status buffer: one i32 per matrix in the batch
-            let total_status_bytes = (batch_size * std::mem::size_of::<i32>()) as NSUInteger;
-            let status_buffer = device
-                .newBufferWithLength_options(total_status_bytes, MTLResourceOptions::StorageModeShared)
-                .ok_or_else(|| MpsError::Buffer("Failed to create status buffer".into()))?;
-
-            // Create MPS matrix objects wrapping the batched data
-            let mps_matrix = unsafe {
-                MPSMatrix::initWithBuffer_descriptor(
-                    MPSMatrix::alloc(),
-                    &matrix_buffer,
-                    &matrix_desc,
-                )
-            };
-
-            let mps_rhs = unsafe {
-                MPSMatrix::initWithBuffer_descriptor(
-                    MPSMatrix::alloc(),
-                    &rhs_buffer,
-                    &rhs_desc,
-                )
-            };
-
-            let mps_solution = unsafe {
-                MPSMatrix::initWithBuffer_descriptor(
-                    MPSMatrix::alloc(),
-                    &solution_buffer,
-                    &rhs_desc,
-                )
-            };
-
-            let mps_pivot = unsafe {
-                MPSMatrix::initWithBuffer_descriptor(
-                    MPSMatrix::alloc(),
-                    &pivot_buffer,
-                    &pivot_desc,
-                )
-            };
-
-            // Create kernels
+            // Create kernels (reused for all matrices)
             let lu_kernel = unsafe {
                 MPSMatrixDecompositionLU::initWithDevice_rows_columns(
                     MPSMatrixDecompositionLU::alloc(),
@@ -335,52 +271,140 @@ mod macos {
                 )
             };
 
-            // Single command buffer for ALL operations
-            let command_buffer = queue.commandBuffer().ok_or_else(|| {
-                MpsError::CommandQueue("Failed to create command buffer".into())
-            })?;
-
-            // Encode LU decomposition for ALL matrices at once
-            unsafe {
-                lu_kernel.encodeToCommandBuffer_sourceMatrix_resultMatrix_pivotIndices_status(
-                    &command_buffer,
-                    &mps_matrix,
-                    &mps_matrix,
-                    &mps_pivot,
-                    Some(&status_buffer),
-                );
+            // Pre-allocate all buffers and create all command buffers BEFORE committing any
+            struct BatchItem {
+                solution_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+                status_buffer: Retained<ProtocolObject<dyn MTLBuffer>>,
+                command_buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
             }
 
-            // Encode solve for ALL matrices at once
-            unsafe {
-                solve_kernel.encodeToCommandBuffer_sourceMatrix_rightHandSideMatrix_pivotIndices_solutionMatrix(
-                    &command_buffer,
-                    &mps_matrix,
-                    &mps_rhs,
-                    &mps_pivot,
-                    &mps_solution,
-                );
+            let mut batch_items = Vec::with_capacity(batch_size);
+
+            for batch_idx in 0..batch_size {
+                let mat_offset = batch_idx * n * n;
+                let rhs_offset = batch_idx * n;
+
+                // Create buffers for this matrix
+                let matrix_data = &matrices[mat_offset..mat_offset + n * n];
+                let rhs_data = &rhs[rhs_offset..rhs_offset + n];
+
+                let matrix_buffer =
+                    create_buffer(device, matrix_data, MTLResourceOptions::StorageModeShared)?;
+                let rhs_buffer =
+                    create_buffer(device, rhs_data, MTLResourceOptions::StorageModeShared)?;
+
+                let solution_buffer = device
+                    .newBufferWithLength_options(rhs_bytes, MTLResourceOptions::StorageModeShared)
+                    .ok_or_else(|| MpsError::Buffer("Failed to create solution buffer".into()))?;
+
+                let pivot_buffer = device
+                    .newBufferWithLength_options(
+                        (n * std::mem::size_of::<u32>()) as NSUInteger,
+                        MTLResourceOptions::StorageModeShared,
+                    )
+                    .ok_or_else(|| MpsError::Buffer("Failed to create pivot buffer".into()))?;
+
+                let status_buffer = device
+                    .newBufferWithLength_options(
+                        std::mem::size_of::<i32>() as NSUInteger,
+                        MTLResourceOptions::StorageModeShared,
+                    )
+                    .ok_or_else(|| MpsError::Buffer("Failed to create status buffer".into()))?;
+
+                // Create MPS matrix objects
+                let mps_matrix = unsafe {
+                    MPSMatrix::initWithBuffer_descriptor(
+                        MPSMatrix::alloc(),
+                        &matrix_buffer,
+                        &matrix_desc,
+                    )
+                };
+
+                let mps_rhs = unsafe {
+                    MPSMatrix::initWithBuffer_descriptor(
+                        MPSMatrix::alloc(),
+                        &rhs_buffer,
+                        &rhs_desc,
+                    )
+                };
+
+                let mps_solution = unsafe {
+                    MPSMatrix::initWithBuffer_descriptor(
+                        MPSMatrix::alloc(),
+                        &solution_buffer,
+                        &rhs_desc,
+                    )
+                };
+
+                let mps_pivot = unsafe {
+                    MPSMatrix::initWithBuffer_descriptor(
+                        MPSMatrix::alloc(),
+                        &pivot_buffer,
+                        &pivot_desc,
+                    )
+                };
+
+                // Create command buffer for this solve
+                let command_buffer = queue.commandBuffer().ok_or_else(|| {
+                    MpsError::CommandQueue("Failed to create command buffer".into())
+                })?;
+
+                // Encode LU decomposition
+                unsafe {
+                    lu_kernel.encodeToCommandBuffer_sourceMatrix_resultMatrix_pivotIndices_status(
+                        &command_buffer,
+                        &mps_matrix,
+                        &mps_matrix,
+                        &mps_pivot,
+                        Some(&status_buffer),
+                    );
+                }
+
+                // Encode solve
+                unsafe {
+                    solve_kernel.encodeToCommandBuffer_sourceMatrix_rightHandSideMatrix_pivotIndices_solutionMatrix(
+                        &command_buffer,
+                        &mps_matrix,
+                        &mps_rhs,
+                        &mps_pivot,
+                        &mps_solution,
+                    );
+                }
+
+                batch_items.push(BatchItem {
+                    solution_buffer,
+                    status_buffer,
+                    command_buffer,
+                });
             }
 
-            // Commit and wait - GPU processes all matrices in parallel
-            command_buffer.commit();
-            command_buffer.waitUntilCompleted();
-
-            // Check for errors
-            if let Some(error) = command_buffer.error() {
-                return Err(MpsError::Compute(error.localizedDescription().to_string()));
+            // Commit ALL command buffers FIRST (enables GPU parallelism)
+            for item in &batch_items {
+                item.command_buffer.commit();
             }
 
-            // Read all solutions at once
-            let all_solutions = read_buffer::<f32>(&solution_buffer, batch_size * n)?;
+            // Now wait for ALL to complete
+            let mut all_solutions = Vec::with_capacity(batch_size * n);
+            let mut singular_indices = Vec::new();
 
-            // Check status for each matrix
-            let statuses = read_buffer::<i32>(&status_buffer, batch_size)?;
-            let singular_indices: Vec<usize> = statuses
-                .iter()
-                .enumerate()
-                .filter_map(|(i, &s)| if s != 0 { Some(i) } else { None })
-                .collect();
+            for (batch_idx, item) in batch_items.iter().enumerate() {
+                item.command_buffer.waitUntilCompleted();
+
+                // Check for errors
+                if let Some(error) = item.command_buffer.error() {
+                    return Err(MpsError::Compute(error.localizedDescription().to_string()));
+                }
+
+                // Read solution
+                let solution = read_buffer::<f32>(&item.solution_buffer, n)?;
+                all_solutions.extend(solution);
+
+                // Check status
+                let status = read_buffer::<i32>(&item.status_buffer, 1)?;
+                if status[0] != 0 {
+                    singular_indices.push(batch_idx);
+                }
+            }
 
             Ok((all_solutions, singular_indices))
         }

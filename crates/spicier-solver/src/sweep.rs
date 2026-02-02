@@ -284,6 +284,44 @@ pub trait SweepStamper: Send + Sync {
 
     /// Number of current variables.
     fn num_vsources(&self) -> usize;
+
+    /// Stamp linear devices into sparse triplet format.
+    ///
+    /// Returns (matrix_triplets, rhs_values) where:
+    /// - matrix_triplets: Vec of (row, col, value) for non-zero matrix entries
+    /// - rhs_values: Vec of (row, value) for non-zero RHS entries
+    ///
+    /// Default implementation uses dense stamping and extracts non-zeros.
+    /// Override for better performance with direct triplet generation.
+    fn stamp_triplets(&self) -> (Vec<(usize, usize, f64)>, Vec<(usize, f64)>) {
+        let size = self.num_nodes() + self.num_vsources();
+        let mut matrix = nalgebra::DMatrix::zeros(size, size);
+        let mut rhs = DVector::zeros(size);
+
+        self.stamp_linear(&mut matrix, &mut rhs);
+
+        // Extract non-zero matrix entries
+        let mut mat_triplets = Vec::new();
+        for col in 0..size {
+            for row in 0..size {
+                let val = matrix[(row, col)];
+                if val.abs() > 1e-15 {
+                    mat_triplets.push((row, col, val));
+                }
+            }
+        }
+
+        // Extract non-zero RHS entries
+        let mut rhs_values = Vec::new();
+        for row in 0..size {
+            let val = rhs[row];
+            if val.abs() > 1e-15 {
+                rhs_values.push((row, val));
+            }
+        }
+
+        (mat_triplets, rhs_values)
+    }
 }
 
 /// Execute a batched sweep analysis.

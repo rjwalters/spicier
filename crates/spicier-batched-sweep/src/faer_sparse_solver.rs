@@ -96,27 +96,40 @@ impl BatchedLuSolver for FaerSparseCachedBatchedSolver {
         let mut solutions = Vec::with_capacity(expected_rhs_len);
         let mut singular_indices = Vec::new();
 
-        // For the first matrix, build symbolic factorization
-        // For subsequent matrices in this batch and future batches, reuse it
-        let symbolic = if let Some(ref sym) = self.symbolic {
-            if self.expected_size != Some(n) {
-                return Err(BatchedSweepError::InvalidDimension(format!(
-                    "Matrix size {} doesn't match cached size {:?}",
-                    n, self.expected_size
-                )));
+        // Try to get cached symbolic factorization, or build one
+        let symbolic = {
+            // First, try to read from cache
+            let cache_read = self.cached.read().unwrap();
+            if let Some(ref sym) = cache_read.symbolic {
+                if cache_read.expected_size != Some(n) {
+                    return Err(BatchedSweepError::InvalidDimension(format!(
+                        "Matrix size {} doesn't match cached size {:?}",
+                        n, cache_read.expected_size
+                    )));
+                }
+                sym.clone()
+            } else {
+                // Need to build symbolic - drop read lock and acquire write lock
+                drop(cache_read);
+
+                // Build symbolic from first matrix
+                let mat_data = &matrices[0..n * n];
+                let triplets = dense_to_sparse_triplets(mat_data, n);
+                let sparse_mat = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &triplets)
+                    .map_err(|e| BatchedSweepError::Backend(format!("Failed to build sparse matrix: {:?}", e)))?;
+
+                let new_symbolic = SymbolicLu::try_new(sparse_mat.symbolic())
+                    .map_err(|e| BatchedSweepError::Backend(format!("Symbolic factorization failed: {:?}", e)))?;
+
+                let symbolic = Arc::new(new_symbolic);
+
+                // Cache the symbolic factorization for future batches
+                let mut cache_write = self.cached.write().unwrap();
+                cache_write.symbolic = Some(symbolic.clone());
+                cache_write.expected_size = Some(n);
+
+                symbolic
             }
-            sym.clone()
-        } else {
-            // Build symbolic from first matrix
-            let mat_data = &matrices[0..n * n];
-            let triplets = dense_to_sparse_triplets(mat_data, n);
-            let sparse_mat = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &triplets)
-                .map_err(|e| BatchedSweepError::Backend(format!("Failed to build sparse matrix: {:?}", e)))?;
-
-            let symbolic = SymbolicLu::try_new(sparse_mat.symbolic())
-                .map_err(|e| BatchedSweepError::Backend(format!("Symbolic factorization failed: {:?}", e)))?;
-
-            Arc::new(symbolic)
         };
 
         // Solve each system using the cached symbolic factorization
@@ -470,5 +483,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_symbolic_caching_across_batches() {
+        // Test that symbolic factorization is cached and reused across multiple solve_batch calls
+        let solver = FaerSparseCachedBatchedSolver::new(GpuBatchConfig::default());
+
+        assert!(!solver.has_cached_symbolic());
+
+        let n = 3;
+
+        // First batch: 3x3 diagonally dominant matrix
+        let matrices1 = vec![
+            5.0, 1.0, 0.0,  // col 0
+            1.0, 5.0, 1.0,  // col 1
+            0.0, 1.0, 5.0,  // col 2
+        ];
+        let rhs1 = vec![6.0, 7.0, 6.0];
+
+        let result1 = solver.solve_batch(&matrices1, &rhs1, n, 1).unwrap();
+        assert!(result1.singular_indices.is_empty());
+
+        // After first batch, symbolic should be cached
+        assert!(solver.has_cached_symbolic());
+
+        // Second batch: same sparsity pattern, different values
+        let matrices2 = vec![
+            10.0, 2.0, 0.0,  // col 0
+            2.0, 10.0, 2.0,  // col 1
+            0.0, 2.0, 10.0,  // col 2
+        ];
+        let rhs2 = vec![12.0, 14.0, 12.0];
+
+        let result2 = solver.solve_batch(&matrices2, &rhs2, n, 1).unwrap();
+        assert!(result2.singular_indices.is_empty());
+
+        // Symbolic should still be cached
+        assert!(solver.has_cached_symbolic());
+
+        // Verify solutions are correct (x = [1, 1, 1] for both scaled systems)
+        let sol1 = result1.solution(0).unwrap();
+        let sol2 = result2.solution(0).unwrap();
+        for i in 0..n {
+            assert!((sol1[i] - 1.0).abs() < 1e-10, "sol1[{}] = {}", i, sol1[i]);
+            assert!((sol2[i] - 1.0).abs() < 1e-10, "sol2[{}] = {}", i, sol2[i]);
+        }
+
+        // Reset cache and verify
+        solver.reset_cache();
+        assert!(!solver.has_cached_symbolic());
     }
 }
