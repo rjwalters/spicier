@@ -3,10 +3,10 @@
 use anyhow::Result;
 use nalgebra::DVector;
 use spicier_core::NodeId;
-use spicier_parser::{InitialCondition, OutputVariable};
+use spicier_parser::{InitialCondition, Measurement, OutputVariable};
 use spicier_solver::{
-    ConvergenceCriteria, InitialConditions, IntegrationMethod, TransientParams, TransientStamper,
-    solve_dc, solve_newton_raphson, solve_transient,
+    ConvergenceCriteria, InitialConditions, IntegrationMethod, MeasureEvaluator, TransientParams,
+    TransientStamper, solve_dc, solve_newton_raphson, solve_transient,
 };
 use std::collections::HashMap;
 
@@ -24,6 +24,7 @@ pub fn run_transient(
     initial_conditions: &[InitialCondition],
     node_map: &HashMap<String, NodeId>,
     print_vars: &[&OutputVariable],
+    measurements: &[&Measurement],
 ) -> Result<()> {
     println!(
         "Transient Analysis (.TRAN {} {} {}{})",
@@ -158,6 +159,36 @@ pub fn run_transient(
         "Transient analysis complete ({} points).",
         result.points.len()
     );
+
+    // Evaluate and print measurements
+    if !measurements.is_empty() {
+        println!();
+        println!("Measurements:");
+        println!("{}", "-".repeat(50));
+
+        // Build node name to MNA index map for measurement evaluation
+        let mna_node_map: HashMap<String, usize> = node_map
+            .iter()
+            .filter_map(|(name, node_id)| {
+                if node_id.is_ground() {
+                    None
+                } else {
+                    Some((name.clone(), node_id.as_u32() as usize - 1))
+                }
+            })
+            .collect();
+
+        for meas in measurements {
+            let meas_result = MeasureEvaluator::eval_tran(meas, &result, &mna_node_map);
+            if let Some(value) = meas_result.value {
+                println!("{} = {:12.6e}", meas_result.name, value);
+            } else if let Some(err) = meas_result.error {
+                println!("{} = FAILED ({})", meas_result.name, err);
+            }
+        }
+        println!();
+    }
+
     println!();
     Ok(())
 }

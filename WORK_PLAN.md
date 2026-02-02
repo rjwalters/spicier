@@ -882,8 +882,10 @@ This is a fallback, not the primary approach. Most circuits solve fine in f32.
 
 **Progress:**
 - ✅ 9c-1 MOSFET kernel: **167M evals/sec** achieved
-- ⬜ 9c-1 Diode/BJT kernels: Next up
-- ⬜ 9c-2 Matrix assembly: Parallel stamping
+- ✅ 9c-1 Diode kernel: **518M evals/sec** achieved
+- ✅ 9c-1 BJT kernel: **107M evals/sec** achieved
+- ✅ 9c-2 Matrix assembly: **187M stamps/sec** achieved
+- ✅ 9c-2 RHS assembly: **463M stamps/sec** achieved
 - ⬜ 9c-3 GMRES solver: Batched iterative solve
 - ⬜ 9c-4 NR loop: Full GPU integration
 
@@ -915,21 +917,25 @@ All three device kernels implemented with excellent GPU performance.
 
 **Result:** 100-500M evals/sec - GPU wins decisively for device evaluation!
 
-#### 9c-2: GPU Matrix Assembly
+#### 9c-2: GPU Matrix Assembly ✅ COMPLETE
 
 Parallel stamping into sparse matrices.
 
-- [ ] Sparse matrix format on GPU
+- [x] Sparse matrix format on GPU
   - CSR with fixed sparsity pattern (computed once on CPU)
   - Value array per sweep point (n_sweeps × nnz floats)
   - Index arrays shared across all sweeps
-- [ ] Parallel stamping kernel
-  - Each device stamps to known locations (precomputed on CPU)
-  - Atomic adds for shared nodes (rare in typical circuits)
+- [x] Parallel stamping kernel ✅
+  - `GpuMatrixAssembler` with WGSL compute shader
+  - `ConductanceStamp` for precomputed matrix locations
+  - Atomic f32 addition via compare-exchange loop
   - One kernel launch assembles ALL matrices for ALL sweeps
-- [ ] RHS vector assembly
-  - Current source contributions
-  - Linearized device currents (Ieq terms)
+  - **187M stamps/sec** on M3 Ultra
+- [x] RHS vector assembly ✅
+  - `GpuRhsAssembler` with WGSL compute shader
+  - `CurrentStamp` for precomputed RHS locations
+  - Stamps equivalent currents (Ieq) from device linearization
+  - **463M stamps/sec** on M3 Ultra
 
 #### 9c-3: GPU Iterative Solver (GMRES)
 

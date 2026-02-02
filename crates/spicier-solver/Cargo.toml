@@ -18,6 +18,7 @@ accelerate = []
 [dependencies]
 spicier-core.workspace = true
 spicier-devices.workspace = true
+spicier-parser.workspace = true
 spicier-simd.workspace = true
 thiserror.workspace = true
 nalgebra.workspace = true

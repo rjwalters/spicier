@@ -1174,4 +1174,130 @@ R1 1 0 1k
         let result = parse_full(input).unwrap();
         assert!((result.parameters["X"] - 1024.0).abs() < 1e-10);
     }
+
+    // .MEAS parsing tests
+
+    #[test]
+    fn test_parse_meas_max() {
+        let input = r#"MEAS Test
+V1 1 0 PULSE(0 1 0 1n 1n 5u 10u)
+R1 1 0 1k
+.TRAN 1n 100u
+.MEAS TRAN vmax MAX V(1)
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.measurements.len(), 1);
+        assert_eq!(result.measurements[0].name, "vmax");
+        assert!(matches!(
+            result.measurements[0].analysis,
+            super::types::MeasureAnalysis::Tran
+        ));
+        match &result.measurements[0].measure_type {
+            super::types::MeasureType::Statistic { func, expr, .. } => {
+                assert!(matches!(func, super::types::StatFunc::Max));
+                assert_eq!(expr, "V(1)");
+            }
+            _ => panic!("Expected Statistic measure type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_meas_avg_with_range() {
+        let input = r#"MEAS AVG Test
+V1 1 0 5
+R1 1 0 1k
+.TRAN 1n 100u
+.MEAS TRAN vavg AVG V(1) FROM=0 TO=10u
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.measurements.len(), 1);
+        match &result.measurements[0].measure_type {
+            super::types::MeasureType::Statistic {
+                func, from, to, ..
+            } => {
+                assert!(matches!(func, super::types::StatFunc::Avg));
+                assert!((from.unwrap() - 0.0).abs() < 1e-12);
+                assert!((to.unwrap() - 10e-6).abs() < 1e-12);
+            }
+            _ => panic!("Expected Statistic measure type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_meas_find_at() {
+        let input = r#"MEAS FIND AT Test
+V1 1 0 5
+R1 1 0 1k
+.DC V1 0 5 1
+.MEAS DC vmid FIND V(1) AT=2.5
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.measurements.len(), 1);
+        match &result.measurements[0].measure_type {
+            super::types::MeasureType::FindAt { find_expr, at_value } => {
+                assert_eq!(find_expr, "V(1)");
+                assert!((at_value - 2.5).abs() < 1e-12);
+            }
+            _ => panic!("Expected FindAt measure type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_meas_trig_targ() {
+        let input = r#"MEAS TRIG/TARG Test
+V1 1 0 PULSE(0 1 0 1n 1n 5u 10u)
+R1 1 2 1k
+C1 2 0 1n
+.TRAN 1n 100u
+.MEAS TRAN delay TRIG V(1) VAL=0.5 RISE=1 TARG V(2) VAL=0.5 RISE=1
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.measurements.len(), 1);
+        assert_eq!(result.measurements[0].name, "delay");
+        match &result.measurements[0].measure_type {
+            super::types::MeasureType::TrigTarg {
+                trig_expr,
+                trig_val,
+                trig_type,
+                targ_expr,
+                targ_val,
+                targ_type,
+            } => {
+                assert_eq!(trig_expr, "V(1)");
+                assert!((trig_val - 0.5).abs() < 1e-12);
+                assert!(matches!(trig_type, super::types::TriggerType::Rise(1)));
+                assert_eq!(targ_expr, "V(2)");
+                assert!((targ_val - 0.5).abs() < 1e-12);
+                assert!(matches!(targ_type, super::types::TriggerType::Rise(1)));
+            }
+            _ => panic!("Expected TrigTarg measure type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_meas_multiple() {
+        let input = r#"Multiple MEAS Test
+V1 1 0 5
+R1 1 0 1k
+.TRAN 1n 100u
+.MEAS TRAN vmax MAX V(1)
+.MEAS TRAN vmin MIN V(1)
+.MEAS TRAN vpp PP V(1)
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.measurements.len(), 3);
+        assert_eq!(result.measurements[0].name, "vmax");
+        assert_eq!(result.measurements[1].name, "vmin");
+        assert_eq!(result.measurements[2].name, "vpp");
+    }
 }

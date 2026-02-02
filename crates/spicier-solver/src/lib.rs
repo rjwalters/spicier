@@ -124,6 +124,7 @@ pub mod dispatch;
 pub mod error;
 pub mod gmres;
 pub mod linear;
+pub mod measure;
 pub mod newton;
 pub mod operator;
 pub mod parallel;
@@ -173,6 +174,7 @@ pub use sweep::{
     ParameterVariation, SweepPoint, SweepPointGenerator, SweepStamper, SweepStamperFactory,
     SweepStatistics, solve_batched_sweep,
 };
+pub use measure::{MeasureError, MeasureEvaluator, MeasureResult};
 pub use transient::{
     AdaptiveTransientParams, AdaptiveTransientResult, CapacitorState, InductorState,
     InitialConditions, IntegrationMethod, TransientParams, TransientResult, TransientStamper,

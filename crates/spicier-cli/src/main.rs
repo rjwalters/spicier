@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use spicier_parser::{AnalysisCommand, PrintAnalysisType, parse_full};
+use spicier_parser::{AnalysisCommand, MeasureAnalysis, Measurement, PrintAnalysisType, parse_full};
 
 use analysis::{run_ac_analysis, run_dc_op, run_dc_sweep, run_transient};
 use backend::detect_backend;
@@ -77,6 +77,7 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
     let initial_conditions = result.initial_conditions;
     let node_map = result.node_map;
     let print_commands = result.print_commands;
+    let measurements = result.measurements;
 
     if cli.verbose {
         println!("Circuit: {}", netlist.title().unwrap_or("(untitled)"));
@@ -117,6 +118,14 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
             .iter()
             .filter(|p| p.analysis_type == analysis_type)
             .flat_map(|p| &p.variables)
+            .collect()
+    };
+
+    // Helper to get measurements for an analysis type
+    let get_measurements = |analysis: MeasureAnalysis| -> Vec<&Measurement> {
+        measurements
+            .iter()
+            .filter(|m| std::mem::discriminant(&m.analysis) == std::mem::discriminant(&analysis))
             .collect()
     };
 
@@ -161,6 +170,7 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
                 uic,
             } => {
                 let print_vars = get_print_vars(PrintAnalysisType::Tran);
+                let tran_measurements = get_measurements(MeasureAnalysis::Tran);
                 run_transient(
                     &netlist,
                     *tstep,
@@ -170,6 +180,7 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
                     &initial_conditions,
                     &node_map,
                     &print_vars,
+                    &tran_measurements,
                 )?;
             }
             _ => {
