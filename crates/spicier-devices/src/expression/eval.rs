@@ -14,12 +14,22 @@ pub struct EvalContext {
     pub currents: HashMap<String, f64>,
     /// Current simulation time.
     pub time: f64,
+    /// Parameters from .PARAM commands.
+    pub parameters: HashMap<String, f64>,
 }
 
 impl EvalContext {
     /// Create a new empty context.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a context with only parameters (for compile-time evaluation).
+    pub fn params_only(parameters: &HashMap<String, f64>) -> Self {
+        Self {
+            parameters: parameters.clone(),
+            ..Default::default()
+        }
     }
 
     /// Set a node voltage.
@@ -35,6 +45,11 @@ impl EvalContext {
     /// Set the simulation time.
     pub fn set_time(&mut self, time: f64) {
         self.time = time;
+    }
+
+    /// Set a parameter value.
+    pub fn set_parameter(&mut self, name: &str, value: f64) {
+        self.parameters.insert(name.to_uppercase(), value);
     }
 }
 
@@ -88,6 +103,11 @@ impl Expr {
                 let arg_values: Vec<f64> = args.iter().map(|a| a.eval(ctx)).collect();
                 eval_function(name, &arg_values)
             }
+            Expr::Parameter { name } => ctx
+                .parameters
+                .get(&name.to_uppercase())
+                .copied()
+                .unwrap_or(0.0),
         }
     }
 

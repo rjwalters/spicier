@@ -25,6 +25,8 @@ pub enum Expr {
     UnaryOp { op: UnaryOp, operand: Box<Expr> },
     /// Function call.
     Function { name: String, args: Vec<Expr> },
+    /// Parameter reference (resolved at parse time).
+    Parameter { name: String },
 }
 
 /// Binary operators.
