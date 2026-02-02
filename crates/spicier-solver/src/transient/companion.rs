@@ -170,11 +170,18 @@ pub struct InductorState {
     pub node_pos: Option<usize>,
     /// Negative node MNA index (None for ground).
     pub node_neg: Option<usize>,
+    /// Branch current index in DC solution (for extracting initial current).
+    pub branch_index: usize,
 }
 
 impl InductorState {
     /// Create a new inductor state.
-    pub fn new(inductance: f64, node_pos: Option<usize>, node_neg: Option<usize>) -> Self {
+    pub fn new(
+        inductance: f64,
+        node_pos: Option<usize>,
+        node_neg: Option<usize>,
+        branch_index: usize,
+    ) -> Self {
         Self {
             inductance,
             i_prev: 0.0,
@@ -182,6 +189,7 @@ impl InductorState {
             i_prev_prev: 0.0,
             node_pos,
             node_neg,
+            branch_index,
         }
     }
 

@@ -47,22 +47,48 @@ pub fn solve_transient(
 ) -> Result<TransientResult> {
     let num_nodes = stamper.num_nodes();
     let num_vsources = stamper.num_vsources();
-    let mut solution = dc_solution.clone();
     let h = params.tstep;
 
     // Initialize reactive element states from DC solution
     for cap in caps.iter_mut() {
-        let vp = cap.node_pos.map(|i| solution[i]).unwrap_or(0.0);
-        let vn = cap.node_neg.map(|i| solution[i]).unwrap_or(0.0);
+        let vp = cap.node_pos.map(|i| dc_solution[i]).unwrap_or(0.0);
+        let vn = cap.node_neg.map(|i| dc_solution[i]).unwrap_or(0.0);
         cap.v_prev = vp - vn;
         cap.i_prev = 0.0; // No current through caps at DC
     }
 
+    // Extract initial inductor currents from DC solution branch currents.
+    // In DC, inductors are modeled as short circuits (0V voltage sources) with
+    // branch current variables. The branch current index points to the position
+    // in dc_solution after all node voltages.
     for ind in inds.iter_mut() {
-        let vp = ind.node_pos.map(|i| solution[i]).unwrap_or(0.0);
-        let vn = ind.node_neg.map(|i| solution[i]).unwrap_or(0.0);
+        let vp = ind.node_pos.map(|i| dc_solution[i]).unwrap_or(0.0);
+        let vn = ind.node_neg.map(|i| dc_solution[i]).unwrap_or(0.0);
         ind.v_prev = vp - vn;
-        // ind.i_prev is set from DC solution if available
+        // Extract initial current from DC solution if the branch index is valid
+        let branch_idx = num_nodes + ind.branch_index;
+        if branch_idx < dc_solution.len() {
+            ind.i_prev = dc_solution[branch_idx];
+        } else {
+            ind.i_prev = 0.0; // Fallback if index out of range
+        }
+    }
+
+    // Create properly-sized solution for transient analysis.
+    // The transient MNA excludes inductor branch currents (they use companion models).
+    let mna_size = num_nodes + num_vsources;
+    let mut solution = DVector::zeros(mna_size);
+    // Copy node voltages
+    for i in 0..num_nodes.min(dc_solution.len()) {
+        solution[i] = dc_solution[i];
+    }
+    // Copy voltage source currents (skip inductor branch currents in DC solution)
+    // This assumes voltage source currents come before inductor currents in DC solution.
+    for i in 0..num_vsources {
+        let dc_idx = num_nodes + i;
+        if dc_idx < dc_solution.len() {
+            solution[num_nodes + i] = dc_solution[dc_idx];
+        }
     }
 
     let mut result = TransientResult {
@@ -256,7 +282,6 @@ pub fn solve_transient_dispatched(
 ) -> Result<TransientResult> {
     let num_nodes = stamper.num_nodes();
     let num_vsources = stamper.num_vsources();
-    let mut solution = dc_solution.clone();
     let h = params.tstep;
     let mna_size = num_nodes + num_vsources;
 
@@ -265,16 +290,35 @@ pub fn solve_transient_dispatched(
 
     // Initialize reactive element states from DC solution
     for cap in caps.iter_mut() {
-        let vp = cap.node_pos.map(|i| solution[i]).unwrap_or(0.0);
-        let vn = cap.node_neg.map(|i| solution[i]).unwrap_or(0.0);
+        let vp = cap.node_pos.map(|i| dc_solution[i]).unwrap_or(0.0);
+        let vn = cap.node_neg.map(|i| dc_solution[i]).unwrap_or(0.0);
         cap.v_prev = vp - vn;
         cap.i_prev = 0.0;
     }
 
+    // Extract initial inductor currents from DC solution
     for ind in inds.iter_mut() {
-        let vp = ind.node_pos.map(|i| solution[i]).unwrap_or(0.0);
-        let vn = ind.node_neg.map(|i| solution[i]).unwrap_or(0.0);
+        let vp = ind.node_pos.map(|i| dc_solution[i]).unwrap_or(0.0);
+        let vn = ind.node_neg.map(|i| dc_solution[i]).unwrap_or(0.0);
         ind.v_prev = vp - vn;
+        let branch_idx = num_nodes + ind.branch_index;
+        if branch_idx < dc_solution.len() {
+            ind.i_prev = dc_solution[branch_idx];
+        } else {
+            ind.i_prev = 0.0;
+        }
+    }
+
+    // Create properly-sized solution for transient analysis
+    let mut solution = DVector::zeros(mna_size);
+    for i in 0..num_nodes.min(dc_solution.len()) {
+        solution[i] = dc_solution[i];
+    }
+    for i in 0..num_vsources {
+        let dc_idx = num_nodes + i;
+        if dc_idx < dc_solution.len() {
+            solution[num_nodes + i] = dc_solution[dc_idx];
+        }
     }
 
     let mut result = TransientResult {
@@ -458,17 +502,40 @@ pub fn solve_transient_adaptive(
     let num_vsources = stamper.num_vsources();
     let mna_size = num_nodes + num_vsources;
 
-    let mut solution = dc_solution.clone();
     let mut t = 0.0;
     let mut h = params.h_init;
 
     // Initialize reactive element states from DC solution
     for cap in caps.iter_mut() {
-        cap.v_prev = cap.voltage_from_solution(&solution);
+        let vp = cap.node_pos.map(|i| dc_solution[i]).unwrap_or(0.0);
+        let vn = cap.node_neg.map(|i| dc_solution[i]).unwrap_or(0.0);
+        cap.v_prev = vp - vn;
         cap.i_prev = 0.0;
     }
+
+    // Extract initial inductor currents from DC solution
     for ind in inds.iter_mut() {
-        ind.v_prev = ind.voltage_from_solution(&solution);
+        let vp = ind.node_pos.map(|i| dc_solution[i]).unwrap_or(0.0);
+        let vn = ind.node_neg.map(|i| dc_solution[i]).unwrap_or(0.0);
+        ind.v_prev = vp - vn;
+        let branch_idx = num_nodes + ind.branch_index;
+        if branch_idx < dc_solution.len() {
+            ind.i_prev = dc_solution[branch_idx];
+        } else {
+            ind.i_prev = 0.0;
+        }
+    }
+
+    // Create properly-sized solution for transient analysis
+    let mut solution = DVector::zeros(mna_size);
+    for i in 0..num_nodes.min(dc_solution.len()) {
+        solution[i] = dc_solution[i];
+    }
+    for i in 0..num_vsources {
+        let dc_idx = num_nodes + i;
+        if dc_idx < dc_solution.len() {
+            solution[num_nodes + i] = dc_solution[dc_idx];
+        }
     }
 
     let mut result = AdaptiveTransientResult {

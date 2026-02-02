@@ -464,8 +464,9 @@ mod tests {
         let dc = DVector::from_vec(vec![5.0]);
 
         // Create state for reactive elements
+        // Note: branch_index=0 is placeholder since this test circuit has no voltage sources
         let mut caps = vec![CapacitorState::new(capacitance, Some(0), None)];
-        let mut inds = vec![InductorState::new(inductance, Some(0), None)];
+        let mut inds = vec![InductorState::new(inductance, Some(0), None, 0)];
 
         // Simulate for 5 periods using Trapezoidal (good for oscillators)
         let params = TransientParams {
