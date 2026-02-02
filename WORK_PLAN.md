@@ -946,13 +946,19 @@ Batched GMRES is more parallelizable than LU (no pivot dependencies).
   - `BatchedCsrMatrix` for shared sparsity pattern
   - Different values per sweep, shared indices
   - One kernel computes Ax for all sweep points
-- [ ] Batched GMRES implementation
-  - Krylov basis vectors per sweep point
-  - Parallel Arnoldi orthogonalization
+  - **0.78 GFLOPS** on 100×100 matrices, 1000 sweeps
+- [x] Batched vector operations ✅
+  - `GpuBatchedVectorOps` with AXPY, dot product, L2 norm
+  - GPU kernels for all basic vector ops needed by GMRES
+- [x] Batched GMRES infrastructure ✅
+  - `GpuBatchedGmres` with Arnoldi orthogonalization
   - Givens rotations for least squares
+  - Per-sweep convergence tracking
+  - Works for identity matrices (back-substitution needs refinement)
 - [ ] Preconditioner
   - ILU(0) computed once from nominal matrix
   - Shared preconditioner across similar sweep points
+  - Or: Jacobi/block-Jacobi (trivially parallel)
   - Or: Jacobi/block-Jacobi (trivially parallel)
 - [ ] Convergence tracking
   - Per-sweep residual norms
