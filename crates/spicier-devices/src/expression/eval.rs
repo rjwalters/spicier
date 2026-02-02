@@ -132,6 +132,7 @@ impl Expr {
             }
             Expr::Current { .. } => 0.0,
             Expr::Time => 0.0,
+            Expr::Parameter { .. } => 0.0, // Parameters are constants
             Expr::BinaryOp { op, left, right } => {
                 let l = left.eval(ctx);
                 let r = right.eval(ctx);
@@ -186,6 +187,7 @@ impl Expr {
                 }
             }
             Expr::Time => 0.0,
+            Expr::Parameter { .. } => 0.0, // Parameters are constants
             Expr::BinaryOp { op, left, right } => {
                 let l = left.eval(ctx);
                 let r = right.eval(ctx);
@@ -231,6 +233,7 @@ impl Expr {
             Expr::Constant(_) => false,
             Expr::Voltage { .. } => false,
             Expr::Current { .. } => false,
+            Expr::Parameter { .. } => false,
             Expr::Time => true,
             Expr::BinaryOp { left, right, .. } => {
                 left.is_time_dependent() || right.is_time_dependent()
