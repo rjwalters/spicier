@@ -304,6 +304,6 @@ Values:
     fn test_parse_complex_value() {
         assert_eq!(parse_complex_value("1.0,2.0"), Some((1.0, 2.0)));
         assert_eq!(parse_complex_value("1.0, 2.0"), Some((1.0, 2.0)));
-        assert_eq!(parse_complex_value("3.14"), Some((3.14, 0.0)));
+        assert_eq!(parse_complex_value("3.5"), Some((3.5, 0.0)));
     }
 }

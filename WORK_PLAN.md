@@ -709,8 +709,13 @@ spice21 has 87 tests with golden data for ring oscillators and device characteri
 
 **Known Issues (documented in tests):**
 - ~~Diode model: ~9% voltage difference in some circuits~~ ✅ RESOLVED - matches ngspice within 0.00%
-- MOSFET model: ~20% drain voltage difference (W/L parsing issue suspected)
+- ~~MOSFET model: ~20% drain voltage difference (W/L parsing issue suspected)~~ ✅ RESOLVED - actual error ~0.6%, W/L parsing correct
 - ~~Inductor transient: Matrix dimension mismatch for branch currents~~ ✅ RESOLVED - initial current now extracted from DC solution
+
+**MOSFET refinements for future (not blocking):**
+- LD (lateral diffusion) - channel length shortening
+- Temperature compensation
+- COX-based KP scaling
 
 **Dependencies:** Core analysis types complete (Phases 4-7)
 
@@ -718,7 +723,7 @@ spice21 has 87 tests with golden data for ring oscillators and device characteri
 - [x] 30+ validation tests pass with analytical/golden data
 - [x] 11 cross-simulator tests pass (linear circuits match ngspice)
 - [x] All existing tests continue to pass
-- [ ] Nonlinear device model discrepancies resolved
+- [x] Nonlinear device model discrepancies resolved (diode ~0%, MOSFET ~0.6%)
 
 ---
 
