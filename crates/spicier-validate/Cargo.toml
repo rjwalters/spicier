@@ -34,10 +34,9 @@ clap = { workspace = true, optional = true }
 default = []
 cli = ["clap"]
 
-# Binary will be added when CLI is implemented
-# [[bin]]
-# name = "spicier-validate"
-# required-features = ["cli"]
+[[bin]]
+name = "spicier-validate"
+required-features = ["cli"]
 
 [dev-dependencies]
 # For integration tests
