@@ -1303,3 +1303,33 @@ Added new phases to WORK_PLAN.md:
 **Resources identified:**
 - ngspice: 113 regression tests, 462 example circuits, test infrastructure scripts
 - spice21: 87 Rust tests, 7 golden data files, ring oscillator validation circuits
+
+### Phase 10: Validation Test Suite - IN PROGRESS
+
+Created initial validation test suite in `crates/spicier-parser/tests/ngspice_validation.rs` with 16 tests comparing spicier against analytical solutions and pre-computed ngspice golden data.
+
+**DC Operating Point Tests (10 tests):**
+- `test_dc_voltage_divider_analytical` - Basic voltage divider, V(2) = 5V
+- `test_dc_current_divider_analytical` - Parallel resistors, V(1) = 5V
+- `test_dc_wheatstone_bridge_balanced` - Balanced bridge, zero bridge voltage
+- `test_dc_wheatstone_bridge_unbalanced` - Unbalanced bridge validation
+- `test_dc_series_resistors_kvl` - Kirchhoff's voltage law verification
+- `test_dc_parallel_resistors_kcl` - Kirchhoff's current law verification
+- `test_dc_vcvs_gain` - VCVS gain=5 circuit
+- `test_dc_inductor_short` - Inductor as DC short circuit
+- `test_ngspice_dc_voltage_divider` - ngspice golden data comparison
+- `test_ngspice_dc_series_resistors` - ngspice golden data comparison
+
+**Transient Analysis Tests (2 tests):**
+- `test_tran_rc_charging_analytical` - RC charging vs analytical V(t) = V_final * (1 - e^(-t/τ))
+- `test_tran_lc_oscillation_frequency` - LC tank resonant frequency within 5%
+
+**AC Analysis Tests (2 tests):**
+- `test_ac_rc_lowpass_3db` - RC filter -3dB point at f_c = 159 Hz
+- `test_ac_rc_lowpass_rolloff` - Verify -20 dB/decade rolloff
+
+**Nonlinear DC Tests (2 tests):**
+- `test_dc_diode_forward_bias` - Diode forward voltage 0.5-0.9V
+- `test_dc_nmos_saturation` - NMOS common source in saturation region
+
+**Test count:** 313 total tests passing (was 297 before validation suite)

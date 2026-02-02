@@ -15,6 +15,7 @@ thiserror.workspace = true
 criterion.workspace = true
 spicier-solver.workspace = true
 nalgebra.workspace = true
+num-complex.workspace = true
 
 [[bench]]
 name = "parser"
