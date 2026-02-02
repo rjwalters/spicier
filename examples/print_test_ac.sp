@@ -1,0 +1,7 @@
+RC Lowpass with .PRINT AC
+V1 1 0 DC 1
+R1 1 2 1k
+C1 2 0 1u
+.PRINT AC VM(2) VP(2)
+.AC DEC 5 10 10k
+.END

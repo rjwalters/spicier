@@ -488,7 +488,6 @@ fn run_ac_analysis(
         AcSweepType::Oct => "OCT",
         AcSweepType::Lin => "LIN",
     };
-    let _ = (print_vars, node_map); // Will use for filtered output later
 
     println!(
         "AC Analysis (.AC {} {} {} {})",
@@ -496,6 +495,9 @@ fn run_ac_analysis(
     );
     println!("==========================================");
     println!();
+
+    // Get nodes to print from .PRINT AC variables
+    let nodes_to_print = get_ac_print_nodes(print_vars, node_map, netlist.num_nodes());
 
     // For nonlinear circuits, first compute DC operating point
     let dc_solution: Option<DVector<f64>> = if netlist.has_nonlinear_devices() {
@@ -553,19 +555,20 @@ fn run_ac_analysis(
 
     // Print header
     print!("{:>14}", "Freq(Hz)");
-    for i in 1..=netlist.num_nodes() {
-        print!("{:>14}{:>14}", format!("VM({})", i), format!("VP({})", i));
+    for (name, _) in &nodes_to_print {
+        print!("{:>14}{:>14}", format!("VM({})", name), format!("VP({})", name));
     }
     println!();
 
-    let width = 14 + 28 * netlist.num_nodes();
+    let width = 14 + 28 * nodes_to_print.len();
     println!("{}", "-".repeat(width));
 
     // Print AC data
     for point in &result.points {
         print!("{:>14.4e}", point.frequency);
-        for i in 0..netlist.num_nodes() {
-            let v = point.solution[i];
+        for (_, node_id) in &nodes_to_print {
+            let idx = (node_id.as_u32() - 1) as usize;
+            let v = point.solution[idx];
             let mag_db = 20.0 * v.norm().log10();
             let phase_deg = v.arg() * 180.0 / PI;
             print!("{:>14.4}{:>14.4}", mag_db, phase_deg);
@@ -611,6 +614,58 @@ fn get_dc_print_nodes(
                 None
             })
             .collect()
+    }
+}
+
+/// Get list of (name, NodeId) pairs to print based on .PRINT AC variables.
+/// Handles V(), VM(), VP(), VDB(), VR(), VI() output types.
+/// If print_vars is empty, prints all nodes.
+fn get_ac_print_nodes(
+    print_vars: &[&OutputVariable],
+    node_map: &std::collections::HashMap<String, NodeId>,
+    num_nodes: usize,
+) -> Vec<(String, NodeId)> {
+    if print_vars.is_empty() {
+        // Print all nodes
+        (1..=num_nodes)
+            .map(|i| (i.to_string(), NodeId::new(i as u32)))
+            .collect()
+    } else {
+        // Extract unique nodes from all AC output variable types
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+
+        for v in print_vars {
+            let node = match v {
+                OutputVariable::Voltage { node, node2: None } => Some(node),
+                OutputVariable::VoltageMag { node } => Some(node),
+                OutputVariable::VoltagePhase { node } => Some(node),
+                OutputVariable::VoltageDb { node } => Some(node),
+                OutputVariable::VoltageReal { node } => Some(node),
+                OutputVariable::VoltageImag { node } => Some(node),
+                _ => None,
+            };
+
+            if let Some(node) = node {
+                if seen.contains(node) {
+                    continue; // Skip duplicates
+                }
+
+                // Try to find node in node_map, or parse as number
+                if let Some(node_id) = node_map.get(node) {
+                    if !node_id.is_ground() {
+                        seen.insert(node.clone());
+                        result.push((node.clone(), *node_id));
+                    }
+                } else if let Ok(n) = node.parse::<u32>() {
+                    if n > 0 && n <= num_nodes as u32 {
+                        seen.insert(node.clone());
+                        result.push((node.clone(), NodeId::new(n)));
+                    }
+                }
+            }
+        }
+        result
     }
 }
 
