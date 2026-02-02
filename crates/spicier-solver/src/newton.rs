@@ -169,6 +169,43 @@ pub trait ScaledNonlinearStamper: NonlinearStamper {
     fn stamp_at_scaled(&self, mna: &mut MnaSystem, solution: &DVector<f64>, source_factor: f64);
 }
 
+/// Parameters for Gmin stepping convergence aid.
+#[derive(Debug, Clone)]
+pub struct GminSteppingParams {
+    /// Initial Gmin value (default 1e-3).
+    pub initial_gmin: f64,
+    /// Final Gmin value (default 1e-12).
+    pub final_gmin: f64,
+    /// Factor to reduce Gmin per step (default 10.0).
+    pub reduction_factor: f64,
+    /// Maximum attempts per Gmin level (default 5).
+    pub max_attempts_per_level: usize,
+}
+
+impl Default for GminSteppingParams {
+    fn default() -> Self {
+        Self {
+            initial_gmin: 1e-3,
+            final_gmin: 1e-12,
+            reduction_factor: 10.0,
+            max_attempts_per_level: 5,
+        }
+    }
+}
+
+/// Result of Gmin stepping.
+#[derive(Debug, Clone)]
+pub struct GminSteppingResult {
+    /// Final solution.
+    pub solution: DVector<f64>,
+    /// Total Newton-Raphson iterations across all Gmin levels.
+    pub total_iterations: usize,
+    /// Number of Gmin stepping levels used.
+    pub num_levels: usize,
+    /// Whether the final Gmin was reached.
+    pub converged: bool,
+}
+
 /// Parameters for source stepping convergence aid.
 #[derive(Debug, Clone)]
 pub struct SourceSteppingParams {
@@ -311,6 +348,109 @@ pub fn solve_with_source_stepping(
     }
 
     Ok(SourceSteppingResult {
+        solution,
+        total_iterations,
+        num_levels,
+        converged: true,
+    })
+}
+
+/// Solve a nonlinear system using Gmin stepping.
+///
+/// Gmin stepping is a convergence aid that adds a small conductance from
+/// each node to ground. Starting with a large Gmin (e.g., 1e-3), the circuit
+/// is solved and Gmin is gradually reduced to its final value (e.g., 1e-12).
+///
+/// This helps by preventing floating nodes and providing numerical stability
+/// during the initial iterations.
+///
+/// # Arguments
+/// * `num_nodes` - Number of nodes (excluding ground)
+/// * `num_vsources` - Number of voltage sources
+/// * `stamper` - Callback to stamp the system (without Gmin)
+/// * `criteria` - Convergence criteria for each Newton-Raphson solve
+/// * `params` - Gmin stepping parameters
+pub fn solve_with_gmin_stepping(
+    num_nodes: usize,
+    num_vsources: usize,
+    stamper: &dyn NonlinearStamper,
+    criteria: &ConvergenceCriteria,
+    params: &GminSteppingParams,
+) -> Result<GminSteppingResult> {
+    let size = num_nodes + num_vsources;
+    let mut solution = DVector::zeros(size);
+    let mut total_iterations = 0;
+    let mut num_levels = 0;
+    let mut current_gmin = params.initial_gmin;
+
+    // Create a wrapper stamper that adds Gmin after the regular stamp
+    struct GminStamper<'a> {
+        inner: &'a dyn NonlinearStamper,
+        gmin: f64,
+    }
+
+    impl NonlinearStamper for GminStamper<'_> {
+        fn stamp_at(&self, mna: &mut MnaSystem, solution: &DVector<f64>) {
+            // First, stamp the circuit normally
+            self.inner.stamp_at(mna, solution);
+            // Then add Gmin from each node to ground
+            mna.stamp_gmin(self.gmin);
+        }
+    }
+
+    while current_gmin >= params.final_gmin * 0.99 {
+        let level_stamper = GminStamper {
+            inner: stamper,
+            gmin: current_gmin,
+        };
+
+        // Try to converge at this Gmin level
+        let mut attempts = 0;
+        let mut level_converged = false;
+
+        while attempts < params.max_attempts_per_level && !level_converged {
+            let result = solve_newton_raphson(
+                num_nodes,
+                num_vsources,
+                &level_stamper,
+                criteria,
+                Some(&solution),
+            )?;
+
+            total_iterations += result.iterations;
+
+            if result.converged {
+                solution = result.solution;
+                level_converged = true;
+            } else {
+                attempts += 1;
+            }
+        }
+
+        if !level_converged {
+            // Give up at this Gmin level
+            return Ok(GminSteppingResult {
+                solution,
+                total_iterations,
+                num_levels,
+                converged: false,
+            });
+        }
+
+        num_levels += 1;
+
+        // Move to next Gmin level
+        if current_gmin <= params.final_gmin {
+            break;
+        }
+
+        current_gmin /= params.reduction_factor;
+        if current_gmin < params.final_gmin {
+            current_gmin = params.final_gmin;
+        }
+    }
+
+    Ok(GminSteppingResult {
         solution,
         total_iterations,
         num_levels,
@@ -494,6 +634,38 @@ mod tests {
 
         println!(
             "Source stepping converged with {} levels, {} total iterations",
+            result.num_levels, result.total_iterations
+        );
+    }
+
+    #[test]
+    fn test_gmin_stepping_diode_circuit() {
+        let stamper = DiodeCircuitStamper {
+            v_source: 5.0,
+            resistance: 1000.0,
+            is: 1e-14,
+            nvt: 0.02585,
+        };
+
+        let criteria = ConvergenceCriteria::default();
+        let params = GminSteppingParams::default();
+
+        let result = solve_with_gmin_stepping(2, 1, &stamper, &criteria, &params)
+            .expect("Gmin stepping should succeed");
+
+        assert!(result.converged, "Should converge");
+        assert!(
+            result.num_levels > 1,
+            "Should use multiple Gmin levels, used {}",
+            result.num_levels
+        );
+
+        // Final solution should match regular NR result
+        let vd = result.solution[1];
+        assert!(vd > 0.5 && vd < 0.8, "V(diode) = {} (expected 0.5-0.8)", vd);
+
+        println!(
+            "Gmin stepping converged with {} levels, {} total iterations",
             result.num_levels, result.total_iterations
         );
     }

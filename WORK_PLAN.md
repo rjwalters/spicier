@@ -174,7 +174,7 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
   - Voltage limiting (critical voltage)
   - Gmin shunt for initial guess
   - [x] Source stepping (`solve_with_source_stepping`)
-  - [ ] Gmin stepping
+  - [x] Gmin stepping (`solve_with_gmin_stepping`)
 - [x] MOSFET Level 1 model
   - Cutoff, linear, saturation regions
   - Threshold voltage, transconductance

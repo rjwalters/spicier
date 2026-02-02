@@ -153,6 +153,20 @@ impl MnaSystem {
     pub fn rhs_mut(&mut self) -> &mut DVector<f64> {
         &mut self.rhs
     }
+
+    /// Stamp Gmin conductance from each node to ground.
+    ///
+    /// This adds a small conductance from every node to ground, which helps
+    /// with convergence by preventing floating nodes and numerical instability.
+    /// Used by the Gmin stepping convergence aid.
+    ///
+    /// # Arguments
+    /// * `gmin` - Small conductance value (typically 1e-12 to 1e-9)
+    pub fn stamp_gmin(&mut self, gmin: f64) {
+        for i in 0..self.num_nodes {
+            self.add_element(i, i, gmin);
+        }
+    }
 }
 
 #[cfg(test)]

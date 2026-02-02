@@ -793,3 +793,24 @@ Added source stepping as a convergence aid for difficult nonlinear circuits. Sou
 5. Report total iterations and number of levels used
 
 **Tests:** 250 total passing (1 new source stepping test)
+
+### Phase 5: Gmin Stepping Convergence Aid
+
+Added Gmin stepping as a convergence aid that adds a small conductance from each node to ground. Starting with a large Gmin (e.g., 1e-3), the circuit is solved and Gmin is gradually reduced to its final value (e.g., 1e-12).
+
+**MNA extension (`spicier-core/src/mna.rs`):**
+- `MnaSystem::stamp_gmin(gmin: f64)` — adds conductance from each node to ground
+
+**New solver types (`spicier-solver/src/newton.rs`):**
+- `GminSteppingParams` — initial_gmin (1e-3), final_gmin (1e-12), reduction_factor (10)
+- `GminSteppingResult` — solution, total_iterations, num_levels, converged
+- `solve_with_gmin_stepping()` — progressively reduces Gmin from initial to final
+
+**Algorithm:**
+1. Start with large Gmin (e.g., 1e-3) from each node to ground
+2. Solve circuit with this Gmin shunt
+3. Reduce Gmin by reduction_factor (e.g., /10)
+4. Repeat until final Gmin reached
+5. Each level uses previous solution as initial guess
+
+**Tests:** 251 total passing (1 new Gmin stepping test)
