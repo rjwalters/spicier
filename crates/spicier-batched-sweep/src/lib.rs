@@ -8,6 +8,8 @@
 //!
 //! - `cuda` - Enable CUDA backend (NVIDIA GPUs)
 //! - `metal` - Enable Metal backend (Apple GPUs)
+//! - `accelerate` - Enable Apple Accelerate framework (macOS optimized LAPACK)
+//! - `faer` - Enable faer backend (high-performance SIMD CPU)
 //!
 //! # Usage
 //!
@@ -46,6 +48,15 @@ mod cuda;
 #[cfg(feature = "metal")]
 mod metal;
 
+#[cfg(feature = "mps")]
+mod mps;
+
+#[cfg(feature = "faer")]
+mod faer_solver;
+
+#[cfg(feature = "accelerate")]
+mod accelerate_solver;
+
 pub use error::{BatchedSweepError, Result};
 pub use solver::{
     BackendSelector, BackendType, BatchedLuSolver, BatchedSolveResult, GpuBatchConfig,
@@ -58,3 +69,12 @@ pub use cuda::CudaBatchedSolver;
 
 #[cfg(feature = "metal")]
 pub use metal::MetalBatchedSolver;
+
+#[cfg(feature = "mps")]
+pub use mps::MpsBatchedSolver;
+
+#[cfg(feature = "faer")]
+pub use faer_solver::FaerBatchedSolver;
+
+#[cfg(feature = "accelerate")]
+pub use accelerate_solver::AccelerateBatchedSolver;

@@ -5,6 +5,7 @@ Unified GPU-accelerated batched sweep solving for SPICE circuit simulation.
 This crate provides a common API for GPU-accelerated batched LU solving across different backends:
 - **CUDA** - NVIDIA GPUs via cuBLAS batched LU operations
 - **Metal** - Apple Silicon GPUs (M1/M2/M3) via wgpu compute shaders
+- **Faer** - High-performance CPU with SIMD optimization
 - **CPU** - Fallback using nalgebra's LU decomposition
 
 ## Features
@@ -84,12 +85,32 @@ To make Metal competitive with CPU, the shader would need:
 2. **Shared memory tiling** - Cache matrix blocks in fast workgroup memory
 3. **Blocked algorithms** - Better memory access patterns
 
+### CPU Backend Comparison: nalgebra vs Faer
+
+Benchmarked on Mac Studio M3 Ultra:
+
+| Batch × Matrix | nalgebra | Faer | Winner |
+|----------------|----------|------|--------|
+| 100 × 10       | 65 µs    | 113 µs | nalgebra 1.7× faster |
+| 100 × 100      | 7.3 ms   | 6.6 ms | faer 1.1× faster |
+| 500 × 100      | 37 ms    | 34 ms  | faer 1.1× faster |
+| 1000 × 10      | 635 µs   | 1.1 ms | nalgebra 1.7× faster |
+| 1000 × 50      | 13 ms    | 15 ms  | nalgebra 1.15× faster |
+| 1000 × 100     | 74 ms    | 70 ms  | faer 1.05× faster |
+
+**Key findings:**
+- **Small matrices (≤50)**: nalgebra is 15-70% faster due to optimized small-matrix routines
+- **Large matrices (100+)**: faer is 5-10% faster due to SIMD and cache-aware algorithms
+
+**Recommendation:** Use default nalgebra for typical circuits. Enable `faer` feature for circuits with 100+ nodes.
+
 ## Feature Flags
 
 | Feature | Description |
 |---------|-------------|
 | `cuda`  | Enable NVIDIA CUDA backend |
 | `metal` | Enable Apple Metal backend |
+| `faer`  | Enable Faer high-performance CPU backend (recommended for large matrices) |
 
 ## Current Thresholds
 

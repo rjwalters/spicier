@@ -1,10 +1,10 @@
-//! Benchmark comparing CPU vs Metal batched sweep performance.
+//! Benchmark comparing CPU vs Faer vs Accelerate vs Metal batched sweep performance.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use nalgebra::DVector;
-use spicier_batched_sweep::{solve_batched_sweep_gpu, BackendSelector};
-#[cfg(feature = "metal")]
-use spicier_batched_sweep::{BackendType, GpuBatchConfig};
+use spicier_batched_sweep::{solve_batched_sweep_gpu, BackendSelector, BackendType};
+#[cfg(any(feature = "metal", feature = "faer", feature = "accelerate"))]
+use spicier_batched_sweep::GpuBatchConfig;
 use spicier_solver::{
     ConvergenceCriteria, DispatchConfig, MonteCarloGenerator, ParameterVariation, SweepStamper,
     SweepStamperFactory,
@@ -94,6 +94,40 @@ fn run_cpu_sweep(batch_size: usize, matrix_size: usize) {
         .unwrap();
 }
 
+#[cfg(feature = "faer")]
+fn run_faer_sweep(batch_size: usize, matrix_size: usize) {
+    let factory = DividerFactory::new(matrix_size);
+    let generator = MonteCarloGenerator::new(batch_size).with_seed(42);
+    let variations = vec![
+        ParameterVariation::new("R1", 1000.0)
+            .with_bounds(500.0, 1500.0)
+            .with_sigma(0.1),
+    ];
+    let criteria = ConvergenceCriteria::default();
+    let config = DispatchConfig::default();
+    let backend = BackendSelector::prefer_faer();
+
+    let _ = solve_batched_sweep_gpu(&backend, &factory, &generator, &variations, &criteria, &config)
+        .unwrap();
+}
+
+#[cfg(feature = "accelerate")]
+fn run_accelerate_sweep(batch_size: usize, matrix_size: usize) {
+    let factory = DividerFactory::new(matrix_size);
+    let generator = MonteCarloGenerator::new(batch_size).with_seed(42);
+    let variations = vec![
+        ParameterVariation::new("R1", 1000.0)
+            .with_bounds(500.0, 1500.0)
+            .with_sigma(0.1),
+    ];
+    let criteria = ConvergenceCriteria::default();
+    let config = DispatchConfig::default();
+    let backend = BackendSelector::prefer_accelerate();
+
+    let _ = solve_batched_sweep_gpu(&backend, &factory, &generator, &variations, &criteria, &config)
+        .unwrap();
+}
+
 #[cfg(feature = "metal")]
 fn run_metal_sweep(batch_size: usize, matrix_size: usize) {
     let factory = DividerFactory::new(matrix_size);
@@ -135,10 +169,36 @@ fn bench_sweep_backends(c: &mut Criterion) {
     for (batch_size, matrix_size) in configs {
         let param = format!("{}x{}", batch_size, matrix_size);
 
-        // CPU benchmark
-        group.bench_with_input(BenchmarkId::new("CPU", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
+        // CPU benchmark (nalgebra)
+        group.bench_with_input(BenchmarkId::new("CPU-nalgebra", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
             b.iter(|| run_cpu_sweep(bs, ms))
         });
+
+        // Faer benchmark (if available)
+        #[cfg(feature = "faer")]
+        {
+            let faer_backend = BackendSelector::prefer_faer();
+            if let Ok(solver) = faer_backend.create_solver() {
+                if solver.backend_type() == BackendType::Faer {
+                    group.bench_with_input(BenchmarkId::new("CPU-faer", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
+                        b.iter(|| run_faer_sweep(bs, ms))
+                    });
+                }
+            }
+        }
+
+        // Accelerate benchmark (if available, macOS only)
+        #[cfg(feature = "accelerate")]
+        {
+            let accel_backend = BackendSelector::prefer_accelerate();
+            if let Ok(solver) = accel_backend.create_solver() {
+                if solver.backend_type() == BackendType::Accelerate {
+                    group.bench_with_input(BenchmarkId::new("CPU-accelerate", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
+                        b.iter(|| run_accelerate_sweep(bs, ms))
+                    });
+                }
+            }
+        }
 
         // Metal benchmark (if available)
         #[cfg(feature = "metal")]

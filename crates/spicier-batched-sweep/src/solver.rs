@@ -74,14 +74,20 @@ impl BatchedSolveResult {
     }
 }
 
-/// Type of GPU backend being used.
+/// Type of backend being used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendType {
     /// NVIDIA CUDA backend.
     Cuda,
-    /// Apple Metal backend.
+    /// Apple Metal backend (wgpu-based).
     Metal,
-    /// CPU fallback (no GPU).
+    /// Apple Metal Performance Shaders backend (MPS - optimized kernels).
+    Mps,
+    /// Apple Accelerate framework (optimized LAPACK for macOS).
+    Accelerate,
+    /// Faer high-performance CPU (SIMD-optimized).
+    Faer,
+    /// CPU fallback (pure Rust nalgebra, no GPU).
     Cpu,
 }
 
@@ -90,6 +96,9 @@ impl std::fmt::Display for BackendType {
         match self {
             BackendType::Cuda => write!(f, "CUDA"),
             BackendType::Metal => write!(f, "Metal"),
+            BackendType::Mps => write!(f, "MPS"),
+            BackendType::Accelerate => write!(f, "Accelerate"),
+            BackendType::Faer => write!(f, "Faer"),
             BackendType::Cpu => write!(f, "CPU"),
         }
     }
@@ -167,6 +176,33 @@ impl BackendSelector {
         }
     }
 
+    /// Create a selector that prefers MPS (Metal Performance Shaders).
+    #[cfg(feature = "mps")]
+    pub fn prefer_mps() -> Self {
+        Self {
+            preferred: Some(BackendType::Mps),
+            config: GpuBatchConfig::default(),
+        }
+    }
+
+    /// Create a selector that prefers Faer (high-performance SIMD CPU).
+    #[cfg(feature = "faer")]
+    pub fn prefer_faer() -> Self {
+        Self {
+            preferred: Some(BackendType::Faer),
+            config: GpuBatchConfig::default(),
+        }
+    }
+
+    /// Create a selector that prefers Apple Accelerate (macOS only).
+    #[cfg(feature = "accelerate")]
+    pub fn prefer_accelerate() -> Self {
+        Self {
+            preferred: Some(BackendType::Accelerate),
+            config: GpuBatchConfig::default(),
+        }
+    }
+
     /// Create a selector that forces CPU fallback.
     pub fn cpu_only() -> Self {
         Self {
@@ -201,12 +237,30 @@ impl BackendSelector {
             return Ok(solver);
         }
 
+        // Prefer MPS over Metal (wgpu) on macOS - MPS has optimized kernels
+        #[cfg(feature = "mps")]
+        if let Some(solver) = self.try_create_backend(BackendType::Mps) {
+            return Ok(solver);
+        }
+
         #[cfg(feature = "metal")]
         if let Some(solver) = self.try_create_backend(BackendType::Metal) {
             return Ok(solver);
         }
 
-        // Fall back to CPU
+        // Prefer Accelerate on macOS (highly optimized LAPACK)
+        #[cfg(feature = "accelerate")]
+        if let Some(solver) = self.try_create_backend(BackendType::Accelerate) {
+            return Ok(solver);
+        }
+
+        // Prefer Faer (high-performance SIMD) over plain CPU
+        #[cfg(feature = "faer")]
+        if let Some(solver) = self.try_create_backend(BackendType::Faer) {
+            return Ok(solver);
+        }
+
+        // Fall back to pure Rust CPU
         Ok(Box::new(CpuBatchedSolver::new(self.config.clone())))
     }
 
@@ -237,6 +291,37 @@ impl BackendSelector {
             }
             #[cfg(not(feature = "metal"))]
             BackendType::Metal => None,
+
+            #[cfg(feature = "mps")]
+            BackendType::Mps => {
+                match crate::mps::MpsBatchedSolver::new(self.config.clone()) {
+                    Ok(solver) => Some(Box::new(solver)),
+                    Err(e) => {
+                        log::debug!("MPS backend unavailable: {}", e);
+                        None
+                    }
+                }
+            }
+            #[cfg(not(feature = "mps"))]
+            BackendType::Mps => None,
+
+            #[cfg(feature = "faer")]
+            BackendType::Faer => {
+                Some(Box::new(crate::faer_solver::FaerBatchedSolver::new(
+                    self.config.clone(),
+                )))
+            }
+            #[cfg(not(feature = "faer"))]
+            BackendType::Faer => None,
+
+            #[cfg(feature = "accelerate")]
+            BackendType::Accelerate => {
+                Some(Box::new(crate::accelerate_solver::AccelerateBatchedSolver::new(
+                    self.config.clone(),
+                )))
+            }
+            #[cfg(not(feature = "accelerate"))]
+            BackendType::Accelerate => None,
 
             BackendType::Cpu => Some(Box::new(CpuBatchedSolver::new(self.config.clone()))),
         }
@@ -405,5 +490,13 @@ mod tests {
         assert!(!config.should_use_gpu(64, 8));
         assert!(!config.should_use_gpu(16, 32));
         assert!(config.should_use_gpu(64, 32));
+    }
+
+    #[cfg(feature = "accelerate")]
+    #[test]
+    fn test_backend_selector_accelerate() {
+        let selector = BackendSelector::prefer_accelerate();
+        let solver = selector.create_solver().unwrap();
+        assert_eq!(solver.backend_type(), BackendType::Accelerate);
     }
 }

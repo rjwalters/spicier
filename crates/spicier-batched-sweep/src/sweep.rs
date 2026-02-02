@@ -362,7 +362,7 @@ mod tests {
         // Check statistics
         let stats = result.statistics(1);
         // V(1) should be around 5V for voltage divider with R1 ≈ R2
-        assert!(stats.mean > 3.0 && stats.mean < 7.0);
+        assert!(stats.mean > 3.0 && stats.mean < 7.0, "Mean was {}", stats.mean);
     }
 
     #[test]

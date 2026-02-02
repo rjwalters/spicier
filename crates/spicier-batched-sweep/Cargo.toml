@@ -14,6 +14,10 @@ categories = ["mathematics", "science"]
 default = []
 cuda = ["dep:spicier-backend-cuda"]
 metal = ["dep:spicier-backend-metal"]
+mps = ["dep:spicier-backend-mps"]
+faer = ["dep:faer"]
+# Apple Accelerate framework (macOS only) - uses direct FFI, no external deps
+accelerate = []
 
 [dependencies]
 spicier-solver.workspace = true
@@ -24,6 +28,10 @@ thiserror.workspace = true
 # Optional backend dependencies
 spicier-backend-cuda = { workspace = true, optional = true }
 spicier-backend-metal = { workspace = true, optional = true }
+spicier-backend-mps = { workspace = true, optional = true }
+
+# High-performance linear algebra (optimized CPU with SIMD)
+faer = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
