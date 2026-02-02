@@ -161,4 +161,6 @@ pub struct ParseResult {
     pub print_commands: Vec<PrintCommand>,
     /// Subcircuit definitions from .SUBCKT blocks.
     pub subcircuits: HashMap<String, SubcircuitDefinition>,
+    /// Parameters from .PARAM commands (name -> value).
+    pub parameters: HashMap<String, f64>,
 }

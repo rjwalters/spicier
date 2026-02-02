@@ -1,5 +1,6 @@
-//! Command parsing (.DC, .AC, .TRAN, .IC, .PRINT, .MODEL, .SUBCKT, .ENDS).
+//! Command parsing (.DC, .AC, .TRAN, .IC, .PRINT, .MODEL, .PARAM, .SUBCKT, .ENDS).
 
+use spicier_core::units::parse_value;
 use spicier_devices::diode::DiodeParams;
 use spicier_devices::mosfet::MosfetParams;
 
@@ -48,6 +49,10 @@ impl<'a> Parser<'a> {
             }
             "ENDS" => {
                 self.parse_ends_command(line)?;
+            }
+            "PARAM" => {
+                // Already parsed in Pass 1, skip
+                self.skip_to_eol();
             }
             _ => {
                 // Unknown command - skip to EOL
@@ -563,6 +568,53 @@ impl<'a> Parser<'a> {
             });
         }
 
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse .PARAM name=value [name=value ...]
+    /// Values must be numeric literals (with optional SI suffix).
+    pub(super) fn parse_param_command(&mut self, line: usize) -> Result<()> {
+        loop {
+            match self.peek() {
+                Token::Eol | Token::Eof => break,
+                Token::Name(n) => {
+                    let pname = n.clone().to_uppercase();
+                    self.advance();
+
+                    // Expect '='
+                    if !matches!(self.peek(), Token::Equals) {
+                        return Err(Error::ParseError {
+                            line,
+                            message: format!(".PARAM: expected '=' after '{}'", pname),
+                        });
+                    }
+                    self.advance(); // consume '='
+
+                    // Get value - use parse_value directly for numeric literals
+                    let value = match self.peek() {
+                        Token::Value(v) | Token::Name(v) => {
+                            let v = v.clone();
+                            self.advance();
+                            parse_value(&v).ok_or_else(|| Error::ParseError {
+                                line,
+                                message: format!(".PARAM: invalid value '{}' for '{}'", v, pname),
+                            })?
+                        }
+                        _ => {
+                            return Err(Error::ParseError {
+                                line,
+                                message: format!(".PARAM: expected value for '{}'", pname),
+                            });
+                        }
+                    };
+                    self.parameters.insert(pname, value);
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
         self.skip_to_eol();
         Ok(())
     }
