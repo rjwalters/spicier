@@ -937,12 +937,14 @@ Parallel stamping into sparse matrices.
   - Stamps equivalent currents (Ieq) from device linearization
   - **463M stamps/sec** on M3 Ultra
 
-#### 9c-3: GPU Iterative Solver (GMRES)
+#### 9c-3: GPU Iterative Solver (GMRES) ⬅️ IN PROGRESS
 
 Batched GMRES is more parallelizable than LU (no pivot dependencies).
 
-- [ ] Batched SpMV kernel
-  - Shared sparsity pattern, different values per sweep
+- [x] Batched SpMV kernel ✅
+  - `GpuBatchedSpmv` with WGSL compute shader
+  - `BatchedCsrMatrix` for shared sparsity pattern
+  - Different values per sweep, shared indices
   - One kernel computes Ax for all sweep points
 - [ ] Batched GMRES implementation
   - Krylov basis vectors per sweep point
