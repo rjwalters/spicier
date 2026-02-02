@@ -857,3 +857,38 @@ Added UIC option for `.TRAN` command that skips DC operating point calculation a
 - Capacitor pre-charged to specific voltage without DC OP
 - Oscillators and other circuits where DC OP doesn't reflect initial state
 - Faster simulation startup by skipping DC OP when initial conditions known
+
+### Phase 6: TR-BDF2 Method Switching
+
+Added TR-BDF2 (Trapezoidal Rule - 2nd order Backward Differentiation Formula) integration method for transient analysis. TR-BDF2 is a composite method that provides L-stability (better than Trapezoidal for stiff circuits) while maintaining 2nd order accuracy.
+
+**New integration method (`spicier-solver/src/transient.rs`):**
+- `IntegrationMethod::TrBdf2` — L-stable, 2nd order composite method
+- `TRBDF2_GAMMA = 2 - √2 ≈ 0.5858` — optimal gamma for TR-BDF2
+
+**TR-BDF2 algorithm:**
+1. Stage 1: Trapezoidal step from t_n to t_n + γ*h (intermediate point)
+2. Stage 2: BDF2 step from t_n + γ*h to t_n + h (using non-uniform step formula)
+
+**Capacitor companion model extensions:**
+- `v_prev_prev: f64` — stores voltage two timesteps ago for BDF2 history
+- `update_trbdf2_intermediate()` — updates state after Stage 1
+- `stamp_trbdf2_bdf2()` — stamps BDF2 companion model with non-uniform step coefficients
+
+**Inductor companion model extensions:**
+- `i_prev_prev: f64` — stores current two timesteps ago for BDF2 history
+- `update_trbdf2_intermediate()` — updates state after Stage 1
+- `stamp_trbdf2_bdf2()` — stamps BDF2 companion model
+
+**BDF2 coefficients for non-uniform steps (h1, h2 with ρ = h2/h1):**
+- a1 = (1+ρ)² / (1+2ρ)
+- a2 = -ρ² / (1+2ρ)
+- b0 = (1+ρ) / (1+2ρ)
+
+**Benefits of TR-BDF2:**
+- L-stability: Dampens spurious oscillations in stiff circuits
+- No numerical ringing unlike pure Trapezoidal
+- Better handling of discontinuities (switching, pulsed sources)
+- Same 2nd order accuracy as Trapezoidal
+
+**Tests:** 1 new test (test_rc_charging_trbdf2)

@@ -203,7 +203,7 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
 - [x] Integration methods
   - Backward Euler (BE)
   - Trapezoidal (TR)
-  - [ ] Method switching (TR-BDF2 optional)
+  - [x] Method switching (TR-BDF2 L-stable composite method)
 - [x] Companion models
   - Capacitor: Geq + Ieq (BE and Trap)
   - Inductor: Geq + Ieq (BE and Trap)

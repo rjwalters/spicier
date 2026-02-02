@@ -13,6 +13,12 @@ use crate::operator::RealOperator;
 use crate::preconditioner::{JacobiPreconditioner, RealPreconditioner};
 use crate::sparse_operator::SparseRealOperator;
 
+/// TR-BDF2 gamma parameter: γ = 2 - √2 ≈ 0.5858 for the fraction of step using Trapezoidal.
+///
+/// The method takes a Trapezoidal step of size γ*h, then a BDF2 step of size (1-γ)*h.
+/// This value maximizes order of accuracy while maintaining L-stability.
+pub const TRBDF2_GAMMA: f64 = 2.0 - std::f64::consts::SQRT_2;
+
 /// Initial conditions for transient analysis.
 ///
 /// Stores node name -> voltage mappings from .IC commands.
@@ -57,6 +63,12 @@ pub enum IntegrationMethod {
     BackwardEuler,
     /// Trapezoidal (second order, A-stable).
     Trapezoidal,
+    /// TR-BDF2 (second order, L-stable, good for stiff circuits).
+    ///
+    /// A composite method that uses Trapezoidal for γ*h (γ ≈ 0.2929),
+    /// then BDF2 for the remaining (1-γ)*h. Provides L-stability
+    /// without the numerical ringing issues of pure Trapezoidal.
+    TrBdf2,
 }
 
 /// Transient analysis parameters.
@@ -123,6 +135,8 @@ pub struct CapacitorState {
     pub v_prev: f64,
     /// Current at previous timestep (for trapezoidal).
     pub i_prev: f64,
+    /// Voltage at two timesteps ago (for TR-BDF2).
+    pub v_prev_prev: f64,
     /// Positive node MNA index (None for ground).
     pub node_pos: Option<usize>,
     /// Negative node MNA index (None for ground).
@@ -136,6 +150,7 @@ impl CapacitorState {
             capacitance,
             v_prev: 0.0,
             i_prev: 0.0,
+            v_prev_prev: 0.0,
             node_pos,
             node_neg,
         }
@@ -173,8 +188,64 @@ impl CapacitorState {
             IntegrationMethod::Trapezoidal => {
                 self.i_prev = 2.0 * self.capacitance / h * (v_new - self.v_prev) - self.i_prev;
             }
+            IntegrationMethod::TrBdf2 => {
+                // TR-BDF2 update after full step completion
+                // Current is computed from the BDF2 formula
+                let gamma = TRBDF2_GAMMA;
+                let alpha = (1.0 - gamma) / (gamma * (2.0 - gamma));
+                self.i_prev = self.capacitance / h
+                    * ((1.0 + alpha) * v_new - (1.0 + 2.0 * alpha) * self.v_prev
+                        + alpha * self.v_prev_prev);
+            }
         }
+        self.v_prev_prev = self.v_prev;
         self.v_prev = v_new;
+    }
+
+    /// Update state after TR-BDF2 intermediate (Trapezoidal) step.
+    ///
+    /// Called after the first stage of TR-BDF2 with the intermediate voltage.
+    pub fn update_trbdf2_intermediate(&mut self, v_gamma: f64, h: f64) {
+        let gamma = TRBDF2_GAMMA;
+        let h_gamma = gamma * h;
+        // Store current v_prev as v_prev_prev for BDF2 stage
+        self.v_prev_prev = self.v_prev;
+        // Update i_prev using trapezoidal current
+        self.i_prev = 2.0 * self.capacitance / h_gamma * (v_gamma - self.v_prev_prev) - self.i_prev;
+        // Update v_prev to intermediate value
+        self.v_prev = v_gamma;
+    }
+
+    /// Stamp companion model for TR-BDF2 BDF2 stage.
+    ///
+    /// Uses v_prev (at γ*h) and v_prev_prev (at 0) for BDF2 formula.
+    pub fn stamp_trbdf2_bdf2(&self, mna: &mut MnaSystem, h: f64) {
+        let gamma = TRBDF2_GAMMA;
+        // BDF2 coefficients for non-uniform step: h1 = γ*h, h2 = (1-γ)*h
+        // The step we're taking is h2 = (1-γ)*h
+        let h2 = (1.0 - gamma) * h;
+        let h1 = gamma * h;
+        let rho = h2 / h1; // ratio of step sizes
+
+        // BDF2 for non-uniform steps:
+        // y_{n+1} = a1 * y_n + a2 * y_{n-1} + b0 * h2 * y'_{n+1}
+        // where:
+        //   a1 = (1+ρ)² / (1+2ρ)
+        //   a2 = -ρ² / (1+2ρ)
+        //   b0 = (1+ρ) / (1+2ρ)
+        let denom = 1.0 + 2.0 * rho;
+        let a1 = (1.0 + rho).powi(2) / denom;
+        let a2 = -rho * rho / denom;
+        let b0 = (1.0 + rho) / denom;
+
+        // For capacitor: i = C * dv/dt
+        // Geq = C / (b0 * h2)
+        let geq = self.capacitance / (b0 * h2);
+        // Ieq represents the history terms: current = Geq * (a1*v_n + a2*v_{n-1})
+        let ieq = geq * (a1 * self.v_prev + a2 * self.v_prev_prev);
+
+        mna.stamp_conductance(self.node_pos, self.node_neg, geq);
+        mna.stamp_current_source(self.node_neg, self.node_pos, ieq);
     }
 
     /// Estimate Local Truncation Error for the capacitor voltage.
@@ -214,6 +285,8 @@ pub struct InductorState {
     pub i_prev: f64,
     /// Voltage at previous timestep (for trapezoidal).
     pub v_prev: f64,
+    /// Current at two timesteps ago (for TR-BDF2).
+    pub i_prev_prev: f64,
     /// Positive node MNA index (None for ground).
     pub node_pos: Option<usize>,
     /// Negative node MNA index (None for ground).
@@ -227,6 +300,7 @@ impl InductorState {
             inductance,
             i_prev: 0.0,
             v_prev: 0.0,
+            i_prev_prev: 0.0,
             node_pos,
             node_neg,
         }
@@ -263,8 +337,53 @@ impl InductorState {
             IntegrationMethod::Trapezoidal => {
                 self.i_prev += h / (2.0 * self.inductance) * (v_new + self.v_prev);
             }
+            IntegrationMethod::TrBdf2 => {
+                // TR-BDF2 update after full step completion
+                let gamma = TRBDF2_GAMMA;
+                let alpha = (1.0 - gamma) / (gamma * (2.0 - gamma));
+                let di = h / self.inductance
+                    * ((1.0 + alpha) * v_new - (1.0 + 2.0 * alpha) * self.v_prev
+                        + alpha * self.v_prev);
+                self.i_prev += di;
+            }
         }
+        self.i_prev_prev = self.i_prev;
         self.v_prev = v_new;
+    }
+
+    /// Update state after TR-BDF2 intermediate (Trapezoidal) step.
+    pub fn update_trbdf2_intermediate(&mut self, v_gamma: f64, h: f64) {
+        let gamma = TRBDF2_GAMMA;
+        let h_gamma = gamma * h;
+        // Save current i_prev for BDF2 stage
+        self.i_prev_prev = self.i_prev;
+        // Trapezoidal update for intermediate step
+        self.i_prev += h_gamma / (2.0 * self.inductance) * (v_gamma + self.v_prev);
+        // v_prev updated to intermediate value (don't update yet, done in main loop)
+    }
+
+    /// Stamp companion model for TR-BDF2 BDF2 stage.
+    pub fn stamp_trbdf2_bdf2(&self, mna: &mut MnaSystem, h: f64) {
+        let gamma = TRBDF2_GAMMA;
+        let h2 = (1.0 - gamma) * h;
+        let h1 = gamma * h;
+        let rho = h2 / h1;
+
+        // BDF2 coefficients for non-uniform steps
+        // i_{n+1} = a1 * i_n + a2 * i_{n-1} + b0 * h2 / L * v_{n+1}
+        let denom = 1.0 + 2.0 * rho;
+        let a1 = (1.0 + rho).powi(2) / denom;
+        let a2 = -rho * rho / denom;
+        let b0 = (1.0 + rho) / denom;
+
+        // For inductor: L * di/dt = v
+        // Geq = b0 * h2 / L (conductance seen by the circuit)
+        let geq = b0 * h2 / self.inductance;
+        // Ieq represents the history terms
+        let ieq = a1 * self.i_prev + a2 * self.i_prev_prev;
+
+        mna.stamp_conductance(self.node_pos, self.node_neg, geq);
+        mna.stamp_current_source(self.node_neg, self.node_pos, ieq);
     }
 
     /// Estimate Local Truncation Error for the inductor current.
@@ -468,7 +587,7 @@ pub fn solve_transient(
         // Stamp static elements (resistors, sources)
         stamper.stamp_static(&mut mna);
 
-        // Stamp companion models for reactive elements
+        // Stamp companion models for reactive elements and solve
         match params.method {
             IntegrationMethod::BackwardEuler => {
                 for cap in caps.iter() {
@@ -476,6 +595,30 @@ pub fn solve_transient(
                 }
                 for ind in inds.iter() {
                     ind.stamp_be(&mut mna, h);
+                }
+
+                // Solve
+                solution = if mna_size >= SPARSE_THRESHOLD {
+                    let solver = match &cached_solver {
+                        Some(s) => s,
+                        None => {
+                            cached_solver = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
+                            cached_solver.as_ref().unwrap()
+                        }
+                    };
+                    solver.solve(&mna.triplets, mna.rhs())?
+                } else {
+                    solve_dense(&mna.to_dense_matrix(), mna.rhs())?
+                };
+
+                // Update state
+                for cap in caps.iter_mut() {
+                    let v = cap.voltage_from_solution(&solution);
+                    cap.update(v, h, params.method);
+                }
+                for ind in inds.iter_mut() {
+                    let v = ind.voltage_from_solution(&solution);
+                    ind.update(v, h, params.method);
                 }
             }
             IntegrationMethod::Trapezoidal => {
@@ -485,33 +628,97 @@ pub fn solve_transient(
                 for ind in inds.iter() {
                     ind.stamp_trap(&mut mna, h);
                 }
-            }
-        }
 
-        // Solve using cached symbolic factorization for large systems
-        solution = if mna_size >= SPARSE_THRESHOLD {
-            let solver = match &cached_solver {
-                Some(s) => s,
-                None => {
-                    cached_solver = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
-                    cached_solver.as_ref().unwrap()
+                // Solve
+                solution = if mna_size >= SPARSE_THRESHOLD {
+                    let solver = match &cached_solver {
+                        Some(s) => s,
+                        None => {
+                            cached_solver = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
+                            cached_solver.as_ref().unwrap()
+                        }
+                    };
+                    solver.solve(&mna.triplets, mna.rhs())?
+                } else {
+                    solve_dense(&mna.to_dense_matrix(), mna.rhs())?
+                };
+
+                // Update state
+                for cap in caps.iter_mut() {
+                    let v = cap.voltage_from_solution(&solution);
+                    cap.update(v, h, params.method);
                 }
-            };
-            solver.solve(&mna.triplets, mna.rhs())?
-        } else {
-            solve_dense(&mna.to_dense_matrix(), mna.rhs())?
-        };
+                for ind in inds.iter_mut() {
+                    let v = ind.voltage_from_solution(&solution);
+                    ind.update(v, h, params.method);
+                }
+            }
+            IntegrationMethod::TrBdf2 => {
+                // TR-BDF2: Two-stage method
+                // Stage 1: Trapezoidal step for γ*h
+                let h_gamma = TRBDF2_GAMMA * h;
+                for cap in caps.iter() {
+                    cap.stamp_trap(&mut mna, h_gamma);
+                }
+                for ind in inds.iter() {
+                    ind.stamp_trap(&mut mna, h_gamma);
+                }
 
-        // Update reactive element states
-        for cap in caps.iter_mut() {
-            let vp = cap.node_pos.map(|i| solution[i]).unwrap_or(0.0);
-            let vn = cap.node_neg.map(|i| solution[i]).unwrap_or(0.0);
-            cap.update(vp - vn, h, params.method);
-        }
-        for ind in inds.iter_mut() {
-            let vp = ind.node_pos.map(|i| solution[i]).unwrap_or(0.0);
-            let vn = ind.node_neg.map(|i| solution[i]).unwrap_or(0.0);
-            ind.update(vp - vn, h, params.method);
+                // Solve stage 1
+                let solution_gamma = if mna_size >= SPARSE_THRESHOLD {
+                    let solver = match &cached_solver {
+                        Some(s) => s,
+                        None => {
+                            cached_solver = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
+                            cached_solver.as_ref().unwrap()
+                        }
+                    };
+                    solver.solve(&mna.triplets, mna.rhs())?
+                } else {
+                    solve_dense(&mna.to_dense_matrix(), mna.rhs())?
+                };
+
+                // Update state to intermediate point
+                for cap in caps.iter_mut() {
+                    let v = cap.voltage_from_solution(&solution_gamma);
+                    cap.update_trbdf2_intermediate(v, h);
+                }
+                for ind in inds.iter_mut() {
+                    let v = ind.voltage_from_solution(&solution_gamma);
+                    ind.update_trbdf2_intermediate(v, h);
+                    ind.v_prev = v; // Update v_prev for BDF2 stage
+                }
+
+                // Stage 2: BDF2 step for (1-γ)*h
+                let mut mna2 = MnaSystem::new(num_nodes, num_vsources);
+                stamper.stamp_static(&mut mna2);
+                for cap in caps.iter() {
+                    cap.stamp_trbdf2_bdf2(&mut mna2, h);
+                }
+                for ind in inds.iter() {
+                    ind.stamp_trbdf2_bdf2(&mut mna2, h);
+                }
+
+                // Solve stage 2
+                solution = if mna_size >= SPARSE_THRESHOLD {
+                    cached_solver
+                        .as_ref()
+                        .unwrap()
+                        .solve(&mna2.triplets, mna2.rhs())?
+                } else {
+                    solve_dense(&mna2.to_dense_matrix(), mna2.rhs())?
+                };
+
+                // Final state update
+                for cap in caps.iter_mut() {
+                    let v = cap.voltage_from_solution(&solution);
+                    cap.update(v, h, params.method);
+                }
+                for ind in inds.iter_mut() {
+                    let v = ind.voltage_from_solution(&solution);
+                    ind.update(v, h, params.method);
+                }
+            }
         }
 
         result.points.push(TimePoint {
@@ -587,6 +794,26 @@ pub fn solve_transient_dispatched(
         let mut mna = MnaSystem::new(num_nodes, num_vsources);
         stamper.stamp_static(&mut mna);
 
+        // Helper closure for solving
+        let solve_mna = |mna: &MnaSystem,
+                         cached: &mut Option<CachedSparseLu>|
+         -> Result<DVector<f64>> {
+            if use_gmres {
+                solve_transient_gmres(mna, &config.gmres_config)
+            } else if mna_size >= SPARSE_THRESHOLD {
+                let solver = match cached.as_ref() {
+                    Some(s) => s,
+                    None => {
+                        *cached = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
+                        cached.as_ref().unwrap()
+                    }
+                };
+                solver.solve(&mna.triplets, mna.rhs())
+            } else {
+                solve_dense(&mna.to_dense_matrix(), mna.rhs())
+            }
+        };
+
         match params.method {
             IntegrationMethod::BackwardEuler => {
                 for cap in caps.iter() {
@@ -594,6 +821,15 @@ pub fn solve_transient_dispatched(
                 }
                 for ind in inds.iter() {
                     ind.stamp_be(&mut mna, h);
+                }
+                solution = solve_mna(&mna, &mut cached_solver)?;
+                for cap in caps.iter_mut() {
+                    let v = cap.voltage_from_solution(&solution);
+                    cap.update(v, h, params.method);
+                }
+                for ind in inds.iter_mut() {
+                    let v = ind.voltage_from_solution(&solution);
+                    ind.update(v, h, params.method);
                 }
             }
             IntegrationMethod::Trapezoidal => {
@@ -603,33 +839,59 @@ pub fn solve_transient_dispatched(
                 for ind in inds.iter() {
                     ind.stamp_trap(&mut mna, h);
                 }
-            }
-        }
-
-        solution = if use_gmres {
-            solve_transient_gmres(&mna, &config.gmres_config)?
-        } else if mna_size >= SPARSE_THRESHOLD {
-            let solver = match &cached_solver {
-                Some(s) => s,
-                None => {
-                    cached_solver = Some(CachedSparseLu::new(mna_size, &mna.triplets)?);
-                    cached_solver.as_ref().unwrap()
+                solution = solve_mna(&mna, &mut cached_solver)?;
+                for cap in caps.iter_mut() {
+                    let v = cap.voltage_from_solution(&solution);
+                    cap.update(v, h, params.method);
                 }
-            };
-            solver.solve(&mna.triplets, mna.rhs())?
-        } else {
-            solve_dense(&mna.to_dense_matrix(), mna.rhs())?
-        };
+                for ind in inds.iter_mut() {
+                    let v = ind.voltage_from_solution(&solution);
+                    ind.update(v, h, params.method);
+                }
+            }
+            IntegrationMethod::TrBdf2 => {
+                // Stage 1: Trapezoidal for γ*h
+                let h_gamma = TRBDF2_GAMMA * h;
+                for cap in caps.iter() {
+                    cap.stamp_trap(&mut mna, h_gamma);
+                }
+                for ind in inds.iter() {
+                    ind.stamp_trap(&mut mna, h_gamma);
+                }
+                let solution_gamma = solve_mna(&mna, &mut cached_solver)?;
 
-        for cap in caps.iter_mut() {
-            let vp = cap.node_pos.map(|i| solution[i]).unwrap_or(0.0);
-            let vn = cap.node_neg.map(|i| solution[i]).unwrap_or(0.0);
-            cap.update(vp - vn, h, params.method);
-        }
-        for ind in inds.iter_mut() {
-            let vp = ind.node_pos.map(|i| solution[i]).unwrap_or(0.0);
-            let vn = ind.node_neg.map(|i| solution[i]).unwrap_or(0.0);
-            ind.update(vp - vn, h, params.method);
+                // Update to intermediate state
+                for cap in caps.iter_mut() {
+                    let v = cap.voltage_from_solution(&solution_gamma);
+                    cap.update_trbdf2_intermediate(v, h);
+                }
+                for ind in inds.iter_mut() {
+                    let v = ind.voltage_from_solution(&solution_gamma);
+                    ind.update_trbdf2_intermediate(v, h);
+                    ind.v_prev = v;
+                }
+
+                // Stage 2: BDF2 for (1-γ)*h
+                let mut mna2 = MnaSystem::new(num_nodes, num_vsources);
+                stamper.stamp_static(&mut mna2);
+                for cap in caps.iter() {
+                    cap.stamp_trbdf2_bdf2(&mut mna2, h);
+                }
+                for ind in inds.iter() {
+                    ind.stamp_trbdf2_bdf2(&mut mna2, h);
+                }
+                solution = solve_mna(&mna2, &mut cached_solver)?;
+
+                // Final state update
+                for cap in caps.iter_mut() {
+                    let v = cap.voltage_from_solution(&solution);
+                    cap.update(v, h, params.method);
+                }
+                for ind in inds.iter_mut() {
+                    let v = ind.voltage_from_solution(&solution);
+                    ind.update(v, h, params.method);
+                }
+            }
         }
 
         result.points.push(TimePoint {
@@ -1095,6 +1357,7 @@ mod tests {
             capacitance: 1e-6,
             v_prev: 2.5,
             i_prev: 0.0,
+            v_prev_prev: 0.0,
             node_pos: Some(0),
             node_neg: None,
         };
@@ -1196,6 +1459,7 @@ mod tests {
             capacitance,
             v_prev,
             i_prev: i_const, // Current at previous step (same as current step for linear ramp)
+            v_prev_prev: 0.0,
             node_pos: Some(0),
             node_neg: None,
         };
@@ -1295,5 +1559,47 @@ mod tests {
         // Check interpolated values (linear from 0 to 1)
         assert!((sampled.points[0].solution[0] - 0.0).abs() < 1e-10);
         assert!((sampled.points[4].solution[0] - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_rc_charging_trbdf2() {
+        // Same RC circuit as other tests but using TR-BDF2
+        let stamper = RcCircuitStamper {
+            voltage: 5.0,
+            resistance: 1000.0,
+        };
+
+        let mut caps = vec![CapacitorState::new(1e-6, Some(1), None)];
+
+        let params = TransientParams {
+            tstop: 5e-3,
+            tstep: 10e-6,
+            method: IntegrationMethod::TrBdf2,
+        };
+
+        let dc = DVector::from_vec(vec![5.0, 0.0, -0.005]);
+
+        let result = solve_transient(&stamper, &mut caps, &mut [], &params, &dc).unwrap();
+
+        // TR-BDF2 should produce reasonable results (similar to Trapezoidal)
+        // At 5τ, voltage should be ~99.3% of final (very close to 5.0)
+        let final_voltage = result.points.last().unwrap().solution[1];
+        assert!(
+            (final_voltage - 5.0).abs() < 0.15,
+            "Final V(cap) = {} (expected ≈ 5.0)",
+            final_voltage
+        );
+
+        // Check voltage at tau (time constant = RC = 1ms)
+        // TR-BDF2 with 10µs steps should be within 20% at tau
+        let tau_step = (1e-3 / params.tstep).round() as usize;
+        let v_at_tau = result.points[tau_step].solution[1];
+        let expected_v_tau = 5.0 * (1.0 - (-1.0_f64).exp()); // ~3.16V
+        assert!(
+            (v_at_tau - expected_v_tau).abs() < 0.6,
+            "V(cap) at tau = {} (expected ≈ {}) [TR-BDF2]",
+            v_at_tau,
+            expected_v_tau
+        );
     }
 }
