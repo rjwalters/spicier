@@ -1607,3 +1607,28 @@ Investigated the MOSFET model discrepancy mentioned in work plan ("~20% drain vo
 - All ~400 tests pass
 - Fixed clippy error: changed test value 3.14 → 3.5 to avoid approx_constant lint
 - Minor clippy warnings remain (style issues, not blocking)
+
+### Work Plan Reorganization: GPU Before Release
+
+Reorganized WORK_PLAN.md to prioritize GPU optimizations before v0.1.0 release.
+
+**Phase 9b now has 8 numbered sub-tasks:**
+1. **9b-1: Truly Batched MPS Operations** ⬅️ NEXT
+   - Investigate MPS batch dimension behavior
+   - Parallel command buffer submission
+2. **9b-2: Memory Layout Optimization**
+   - Contiguous batch storage, alignment padding
+3. **9b-3: Pipelined Assembly + Solve**
+   - Double-buffered batch processing
+4. **9b-4: Shared Sparsity Structure**
+   - Symbolic caching, value-only updates
+5. **9b-5: GPU-Side RNG**
+   - cuRAND for CUDA, MPSMatrixRandom for Metal
+6. **9b-6: GPU-Side Statistics**
+   - Reduction kernels, histogram, yield analysis
+7. **9b-7: Early Termination**
+   - Per-point convergence tracking
+8. **9b-8: Benchmarking & Documentation**
+   - Comprehensive benchmarks, README updates
+
+**Phase 11 (Release)** now blocked by Phase 9b completion.

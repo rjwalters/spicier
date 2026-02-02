@@ -541,7 +541,7 @@ Crossover point: ~n=50. Accelerate wins big for medium/large circuits.
   - Double-buffering for overlapping compute and transfer
   - Upload matrix structure once, stream value diffs per sweep point
 
-### 9b: Batched Sweep Solver (Primary GPU Win)
+### 9b: Batched Sweep Solver (Primary GPU Win) — REQUIRED FOR v0.1.0
 
 **Key Insight:** Sweeps are embarrassingly parallel. The goal is to saturate GPU resources with many independent direct solves running simultaneously, not to make one solve faster with iterative methods.
 
@@ -553,7 +553,7 @@ Crossover point: ~n=50. Accelerate wins big for medium/large circuits.
 | 32 < N < ~256 | Threadblock-per-matrix | One threadblock per system; in-block parallelism for factorization |
 | N > 256 | Multiple SMs per matrix | Larger systems need more parallelism per solve |
 
-**Batched Direct Solve Implementation:**
+**✅ Completed - Backend Infrastructure:**
 
 - [x] `spicier-batched-sweep` crate with unified API
   - `BatchedLuSolver` trait for backend-agnostic batched solves
@@ -568,34 +568,158 @@ Crossover point: ~n=50. Accelerate wins big for medium/large circuits.
 - [x] High-performance CPU fallback
   - Faer backend with SIMD-optimized LU
   - Accelerate backend for macOS (LAPACK)
-- [ ] Truly batched MPS operations
-  - Current MPS impl processes matrices sequentially (batching API issues)
-  - Investigate parallel command buffer submission
-  - Or fall back to wgpu custom shaders for true batching
 
-**Pipeline Optimization:**
+---
 
-- [ ] Pipelined assembly + solve
-  - While GPU solves batch K, CPU assembles batch K+1
-  - Hide matrix assembly latency behind GPU compute
-- [ ] Shared sparsity structure
-  - Sweep matrices share symbolic structure, differ only in values
-  - Upload structure once, stream value diffs per sweep point
-- [ ] Memory layout optimization
-  - Contiguous batch storage for coalesced GPU memory access
-  - Padding for alignment (warp size, cache lines)
+#### 9b-1: Truly Batched MPS Operations ⬅️ NEXT
 
-**Statistical Analysis on GPU:**
+Current MPS implementation processes matrices sequentially due to batching API issues.
 
-- [ ] GPU-side random number generation
-  - cuRAND for CUDA, Metal Performance Shaders for Apple
-  - Avoid CPU→GPU transfer of random parameters
-- [ ] Histogram and statistics without CPU round-trip
-  - Reduction kernels for mean, variance, min, max
-  - Yield analysis with thousands of samples
-- [ ] Early termination for converged points
-  - Track convergence status per sweep point
-  - Retired points don't consume compute in subsequent iterations
+- [ ] Investigate MPS batch dimension behavior
+  - Test `MPSMatrix.matrices` property for true batching
+  - Profile kernel launch overhead vs sequential approach
+- [ ] Parallel command buffer submission
+  - Multiple command buffers in flight simultaneously
+  - Use completion handlers for pipelining
+- [ ] Fallback decision: If MPS batching unresolvable, prefer wgpu custom shaders for batched workloads
+
+**Acceptance:** MPS processes N matrices in parallel, not sequentially.
+
+---
+
+#### 9b-2: Memory Layout Optimization
+
+Optimize data layout for GPU memory access patterns.
+
+- [ ] Contiguous batch storage
+  - All matrices packed into single buffer (batch × n × n)
+  - All RHS vectors packed into single buffer (batch × n)
+- [ ] Alignment padding
+  - Pad matrix rows to warp size (32) for coalesced access
+  - Pad batch count to avoid partial warps
+- [ ] Structure-of-Arrays for device parameters
+  - Diode: separate arrays for Is, n, node_pos, node_neg
+  - MOSFET: separate arrays for Vth, beta, lambda, nodes
+
+**Acceptance:** Benchmark shows >20% improvement from layout optimization.
+
+---
+
+#### 9b-3: Pipelined Assembly + Solve
+
+Hide CPU matrix assembly latency behind GPU computation.
+
+- [ ] Double-buffered batch processing
+  - Buffer A: GPU solving batch K
+  - Buffer B: CPU assembling batch K+1
+  - Swap on completion
+- [ ] Async GPU dispatch
+  - Non-blocking solve submission
+  - Completion callback triggers next batch
+- [ ] Batch size tuning
+  - Find optimal batch size for pipeline balance
+  - Too small: GPU starved; too large: memory pressure
+
+**Acceptance:** Pipeline hides >50% of assembly latency.
+
+---
+
+#### 9b-4: Shared Sparsity Structure
+
+Sweep matrices share the same sparsity pattern, only values differ.
+
+- [ ] Symbolic structure caching
+  - Compute sparsity pattern once from first sweep point
+  - Store CSR/CSC index arrays on GPU
+- [ ] Value-only updates
+  - Upload only non-zero values per sweep point
+  - Reuse row/column index buffers
+- [ ] Incremental stamping
+  - Track which matrix entries change between points
+  - Only update changed values
+
+**Acceptance:** Sweep of 1000 points uploads structure once, values 1000 times.
+
+---
+
+#### 9b-5: GPU-Side Random Number Generation
+
+Avoid CPU→GPU transfer of random parameters for Monte Carlo.
+
+- [ ] CUDA: cuRAND integration
+  - Device-side RNG state
+  - Generate parameters directly on GPU
+- [ ] Metal: MPSMatrixRandom or custom LCG
+  - MPS random matrix generation
+  - Or lightweight custom PRNG in compute shader
+- [ ] Seeded reproducibility
+  - User-specified seed for reproducible runs
+  - Per-stream seeds for parallel generation
+
+**Acceptance:** 10k Monte Carlo samples with zero CPU→GPU random data transfer.
+
+---
+
+#### 9b-6: GPU-Side Statistics
+
+Compute sweep statistics without CPU round-trip.
+
+- [ ] Reduction kernels
+  - Sum, min, max via parallel reduction
+  - Mean = sum / count
+  - Variance via Welford's algorithm or two-pass
+- [ ] Histogram computation
+  - Atomic histogram binning on GPU
+  - Configurable bin count and range
+- [ ] Yield analysis
+  - Count passing/failing points per specification
+  - Return only pass/fail counts, not all solutions
+
+**Acceptance:** 10k-point sweep returns statistics without transferring all solutions to CPU.
+
+---
+
+#### 9b-7: Early Termination for Converged Points
+
+Don't waste compute on already-converged sweep points.
+
+- [ ] Per-point convergence tracking
+  - Boolean mask: converged[batch_idx]
+  - Update after each NR iteration
+- [ ] Compaction or masking
+  - Option A: Compact active points for next iteration
+  - Option B: Mask inactive points (simpler, some wasted compute)
+- [ ] Iteration count limits
+  - Per-point iteration counter
+  - Mark as failed if limit exceeded
+
+**Acceptance:** 90% converged points at iteration 5 → iteration 6 processes only 10%.
+
+---
+
+#### 9b-8: Benchmarking & Documentation
+
+Final validation before release.
+
+- [ ] Comprehensive benchmarks
+  - Sweep sizes: 100, 1k, 10k, 100k points
+  - Matrix sizes: 10, 50, 100, 500 nodes
+  - All backends: CUDA, MPS, Metal, Accelerate, Faer, CPU
+- [ ] Performance documentation
+  - Speedup charts vs CPU baseline
+  - Guidance on when GPU is beneficial
+  - Backend selection recommendations
+- [ ] README updates
+  - GPU acceleration section
+  - Backend feature flags
+  - Example usage with batched sweeps
+- [ ] API documentation
+  - `spicier-batched-sweep` rustdoc
+  - `BackendSelector` usage examples
+
+**Acceptance:** README and docs show clear GPU performance story.
+
+---
 
 **Float-Float Precision (Contingency):**
 
@@ -649,12 +773,13 @@ For circuits with 50k+ nodes, sparse LU factorization itself is the bottleneck.
 
 **Dependencies:** Phase 7c (sparse-only MNA), Phase 8
 
-**Acceptance Criteria:**
-- Auto-detection correctly selects CUDA on Linux/Windows with NVIDIA GPU, Metal on macOS, CPU elsewhere
-- `--backend=cpu` always works as fallback
-- 1000-point DC sweep of a nonlinear circuit shows measurable speedup on GPU vs CPU
-- Batched device evaluation of 100k MOSFETs faster on GPU than CPU
-- All results match CPU reference to within solver tolerance
+**Phase 9 Acceptance Criteria:**
+- [x] Auto-detection correctly selects CUDA on Linux/Windows with NVIDIA GPU, Metal on macOS, CPU elsewhere
+- [x] `--backend=cpu` always works as fallback
+- [ ] 10k-point Monte Carlo sweep completes with GPU acceleration
+- [ ] Benchmark suite covers all backends with documented speedups
+- [ ] All results match CPU reference to within solver tolerance
+- [ ] README documents GPU performance characteristics
 
 ---
 
@@ -730,6 +855,8 @@ spice21 has 87 tests with golden data for ring oscillators and device characteri
 ## Phase 11: crates.io Release Preparation
 
 **Goal:** Prepare spicier crates for publication on crates.io.
+
+**Blocked by:** Phase 9b (GPU batched sweep optimizations must be complete first)
 
 ### 11a: API Stability Review
 
