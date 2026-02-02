@@ -898,29 +898,22 @@ GPU: for each NR iteration:
 CPU: download final statistics (once)
 ```
 
-#### 9c-1: GPU Device Evaluation Kernels
+#### 9c-1: GPU Device Evaluation Kernels ✅ COMPLETE
 
-The clear GPU win - device evaluation is embarrassingly parallel.
+All three device kernels implemented with excellent GPU performance.
 
 - [x] MOSFET kernel (WGSL) ✅
-  - Input: Vgs, Vds, Vbs for each device × each sweep point
-  - Output: Id, gm, gds, gmb (currents + derivatives)
-  - Region detection (cutoff/linear/saturation)
-  - Body effect with threshold voltage modulation
-  - NMOS/PMOS polarity handling
-  - **Achieved: 167M evals/sec on M3 Ultra**
-- [ ] Diode kernel
-  - Input: Vd for each device × each sweep
-  - Output: Id, gd (current + conductance)
-  - Voltage limiting built into kernel
-- [ ] BJT kernel
-  - Input: Vbe, Vce for each device × each sweep
-  - Output: Ic, Ib, gm, gpi, go
-- [x] Data layout for coalesced access
-  - Structure-of-Arrays: all Vgs together, all Vds together, etc.
-  - 256-thread workgroups for GPU occupancy
+  - Level 1 model with body effect, region detection
+  - **167M evals/sec** on M3 Ultra
+- [x] Diode kernel (WGSL) ✅
+  - Shockley equation with voltage limiting
+  - **518M evals/sec** on M3 Ultra
+- [x] BJT kernel (WGSL) ✅
+  - Ebers-Moll with Early effect, NPN/PNP
+  - **107M evals/sec** on M3 Ultra
+- [x] Data layout: SoA, 256-thread workgroups
 
-**Result:** 167M evals/sec achieved (10k devices × 1k sweeps in ~60ms)
+**Result:** 100-500M evals/sec - GPU wins decisively for device evaluation!
 
 #### 9c-2: GPU Matrix Assembly
 
