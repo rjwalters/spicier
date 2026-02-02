@@ -130,8 +130,10 @@ pub mod newton;
 pub mod operator;
 pub mod parallel;
 pub mod preconditioner;
+pub mod sensitivity;
 pub mod solver_select;
 pub mod sparse_operator;
+pub mod spectral;
 pub mod sweep;
 pub mod transient;
 
@@ -180,6 +182,15 @@ pub use sweep::{
     SweepStatistics, solve_batched_sweep,
 };
 pub use measure::{MeasureError, MeasureEvaluator, MeasureResult};
+pub use sensitivity::{
+    AcSensitivityResult, AcSensitivityStamper, DcSensitivityResult, DcSensitivityStamper,
+    SensitivityConfig, SensitivityOutput, SensitivityParam, compute_ac_sensitivity,
+    compute_ac_sensitivity_sweep, compute_dc_sensitivity,
+};
+pub use spectral::{
+    HarmonicInfo, SpectralConfig, SpectralResult, ThdResult, WindowFunction, compute_fft,
+    compute_fft_from_samples, compute_thd, compute_thd_from_samples, resample_uniform,
+};
 pub use transient::{
     AdaptiveTransientParams, AdaptiveTransientResult, CapacitorState, InductorState,
     InitialConditions, IntegrationMethod, TransientParams, TransientResult, TransientStamper,

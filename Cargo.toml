@@ -74,6 +74,9 @@ serde_json = "1"
 # Testing/benchmarking
 criterion = "0.5"
 
+# Signal processing
+rustfft = "6"
+
 [profile.release]
 lto = true
 codegen-units = 1

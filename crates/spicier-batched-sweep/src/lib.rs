@@ -45,6 +45,7 @@ mod error;
 pub mod pipeline;
 pub mod rng;
 mod solver;
+pub mod spectral;
 pub mod statistics;
 mod sweep;
 
@@ -87,6 +88,12 @@ pub use rng::{
 pub use statistics::{
     Histogram, HistogramBin, StatisticsAccumulator, StreamingStatistics, SweepStatistics,
     SweepSummary, YieldAnalysis, YieldSpec,
+};
+
+// Re-export batch spectral analysis types
+pub use spectral::{
+    BatchSpectralResult, ThdStatistics, compute_batch_fft_stats, compute_batch_thd,
+    compute_batch_thd_with_stats, compute_thd_statistics,
 };
 
 #[cfg(feature = "cuda")]
