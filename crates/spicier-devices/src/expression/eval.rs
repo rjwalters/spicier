@@ -246,7 +246,7 @@ impl Expr {
     /// Check if this expression is nonlinear (depends on voltages/currents in a nonlinear way).
     pub fn is_nonlinear(&self) -> bool {
         match self {
-            Expr::Constant(_) | Expr::Time => false,
+            Expr::Constant(_) | Expr::Time | Expr::Parameter { .. } => false,
             Expr::Voltage { .. } | Expr::Current { .. } => false,
             Expr::BinaryOp { op, left, right } => {
                 let left_has_var = left.has_voltage_or_current();
@@ -281,7 +281,7 @@ impl Expr {
     /// Check if this expression contains voltage or current references.
     pub fn has_voltage_or_current(&self) -> bool {
         match self {
-            Expr::Constant(_) | Expr::Time => false,
+            Expr::Constant(_) | Expr::Time | Expr::Parameter { .. } => false,
             Expr::Voltage { .. } | Expr::Current { .. } => true,
             Expr::BinaryOp { left, right, .. } => {
                 left.has_voltage_or_current() || right.has_voltage_or_current()
