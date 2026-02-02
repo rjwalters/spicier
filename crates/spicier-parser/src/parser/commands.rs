@@ -1,7 +1,8 @@
 //! Command parsing (.DC, .AC, .TRAN, .IC, .PRINT, .MODEL, .PARAM, .SUBCKT, .ENDS).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use spicier_core::units::parse_value;
 use spicier_devices::bjt::BjtParams;
 use spicier_devices::diode::DiodeParams;
 use spicier_devices::expression::{EvalContext, parse_expression_with_params};
@@ -10,6 +11,7 @@ use spicier_devices::mosfet::MosfetParams;
 
 use crate::error::{Error, Result};
 use crate::lexer::Token;
+use super::ParamContext;
 
 use super::types::{
     AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, MeasureAnalysis, MeasureType,
@@ -592,7 +594,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Parse .SUBCKT name port1 port2 ...
+    /// Parse .SUBCKT name port1 port2 ... [PARAMS: param=default ...]
     pub(super) fn parse_subckt_command(&mut self, line: usize) -> Result<()> {
         // Get subcircuit name
         let name = match self.peek() {
@@ -609,12 +611,35 @@ impl<'a> Parser<'a> {
             }
         };
 
-        // Get port names until EOL
+        // Get port names until EOL or PARAMS:
         let mut ports = Vec::new();
+        let mut params = HashMap::new();
+
         loop {
             match self.peek() {
                 Token::Eol | Token::Eof => break,
-                Token::Name(n) | Token::Value(n) => {
+                Token::Name(n) => {
+                    let n_upper = n.to_uppercase();
+                    if n_upper == "PARAMS" {
+                        self.advance();
+                        // Expect colon after PARAMS (it may be part of the name or separate)
+                        // Check if there's a colon by looking for Name ending with ':'
+                        // Or skip if next token looks like param assignment
+                        // PARAMS: is often written as a single token "PARAMS:" or "PARAMS" ":"
+                        // For simplicity, just parse the param assignments
+                        params = self.parse_param_defaults(line)?;
+                        break;
+                    } else if n_upper.starts_with("PARAMS:") {
+                        // Handle case where "PARAMS:" is a single token
+                        self.advance();
+                        params = self.parse_param_defaults(line)?;
+                        break;
+                    } else {
+                        ports.push(n.clone());
+                        self.advance();
+                    }
+                }
+                Token::Value(n) => {
                     ports.push(n.clone());
                     self.advance();
                 }
@@ -624,10 +649,86 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Start a new subcircuit definition
-        self.current_subckt = Some(SubcircuitDefinition::new(name.to_uppercase(), ports));
+        // Start a new subcircuit definition with params
+        self.current_subckt = Some(SubcircuitDefinition::new_with_params(
+            name.to_uppercase(),
+            ports,
+            params,
+        ));
         self.skip_to_eol();
         Ok(())
+    }
+
+    /// Parse parameter defaults: `param=value param2=value2 ...`
+    /// Returns a HashMap of uppercase parameter names to values.
+    fn parse_param_defaults(&mut self, line: usize) -> Result<HashMap<String, f64>> {
+        let mut params = HashMap::new();
+
+        // Build context from existing parameters for expression evaluation
+        let ctx = ParamContext::from_global(self.parameters.clone());
+
+        loop {
+            match self.peek() {
+                Token::Eol | Token::Eof => break,
+                Token::Name(n) => {
+                    let pname = n.to_uppercase();
+                    self.advance();
+
+                    // Expect '='
+                    if !matches!(self.peek(), Token::Equals) {
+                        return Err(Error::ParseError {
+                            line,
+                            message: format!(
+                                "Expected '=' after parameter name '{}' in PARAMS:",
+                                pname
+                            ),
+                        });
+                    }
+                    self.advance(); // consume '='
+
+                    // Get value (numeric, parameter name, or curly expression)
+                    let value = match self.peek() {
+                        Token::Value(v) | Token::Name(v) => {
+                            let v = v.clone();
+                            self.advance();
+                            // Try numeric first, then parameter lookup
+                            if let Some(val) = parse_value(&v) {
+                                val
+                            } else if let Some(val) = ctx.get(&v) {
+                                val
+                            } else {
+                                return Err(Error::ParseError {
+                                    line,
+                                    message: format!(
+                                        "Unknown value '{}' for parameter '{}'",
+                                        v, pname
+                                    ),
+                                });
+                            }
+                        }
+                        Token::CurlyExpr(expr) => {
+                            let expr = expr.clone();
+                            self.advance();
+                            self.eval_curly_expr_with_context(&expr, &ctx, line)?
+                        }
+                        _ => {
+                            return Err(Error::ParseError {
+                                line,
+                                message: format!("Expected value for parameter '{}'", pname),
+                            });
+                        }
+                    };
+
+                    params.insert(pname, value);
+                }
+                _ => {
+                    // Skip unexpected tokens
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(params)
     }
 
     /// Parse .ENDS [name]

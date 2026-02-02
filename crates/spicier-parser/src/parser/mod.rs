@@ -11,6 +11,9 @@ use spicier_devices::mosfet::MosfetParams;
 use crate::error::{Error, Result};
 use crate::lexer::{Lexer, SpannedToken, Token};
 
+use spicier_devices::expression::{parse_expression_with_params, EvalContext};
+use std::collections::HashSet;
+
 mod commands;
 mod elements;
 mod subcircuit;
@@ -24,6 +27,86 @@ pub use types::{
 };
 
 use types::SubcircuitDefinition as SubcircuitDef;
+
+/// Context for resolving parameter values during subcircuit expansion.
+///
+/// Provides hierarchical lookup with precedence: instance > subcircuit > global.
+#[derive(Debug, Clone, Default)]
+pub struct ParamContext {
+    /// Global `.PARAM` values from top-level.
+    pub global: HashMap<String, f64>,
+    /// Subcircuit's PARAMS: default values.
+    pub subcircuit_defaults: HashMap<String, f64>,
+    /// Instance's PARAMS: override values.
+    pub instance_overrides: HashMap<String, f64>,
+}
+
+impl ParamContext {
+    /// Create a new empty context.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a context from global parameters only.
+    pub fn from_global(global: HashMap<String, f64>) -> Self {
+        Self {
+            global,
+            subcircuit_defaults: HashMap::new(),
+            instance_overrides: HashMap::new(),
+        }
+    }
+
+    /// Create a full context with all three levels.
+    pub fn with_all(
+        global: HashMap<String, f64>,
+        subcircuit_defaults: HashMap<String, f64>,
+        instance_overrides: HashMap<String, f64>,
+    ) -> Self {
+        Self {
+            global,
+            subcircuit_defaults,
+            instance_overrides,
+        }
+    }
+
+    /// Look up a parameter by name (case-insensitive).
+    /// Precedence: instance_overrides > subcircuit_defaults > global
+    pub fn get(&self, name: &str) -> Option<f64> {
+        let upper = name.to_uppercase();
+        self.instance_overrides
+            .get(&upper)
+            .or_else(|| self.subcircuit_defaults.get(&upper))
+            .or_else(|| self.global.get(&upper))
+            .copied()
+    }
+
+    /// Get all parameters as a flat map (for expression evaluation).
+    /// Returns merged values with proper precedence.
+    pub fn merged(&self) -> HashMap<String, f64> {
+        let mut result = self.global.clone();
+        for (k, v) in &self.subcircuit_defaults {
+            result.insert(k.clone(), *v);
+        }
+        for (k, v) in &self.instance_overrides {
+            result.insert(k.clone(), *v);
+        }
+        result
+    }
+
+    /// Create a child context for nested subcircuit expansion.
+    /// The current merged context becomes the child's global scope.
+    pub fn child_context(
+        &self,
+        subcircuit_defaults: HashMap<String, f64>,
+        instance_overrides: HashMap<String, f64>,
+    ) -> Self {
+        Self {
+            global: self.merged(),
+            subcircuit_defaults,
+            instance_overrides,
+        }
+    }
+}
 
 /// Parse a SPICE netlist string into a Netlist.
 ///
@@ -170,6 +253,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_title(&mut self) -> Option<String> {
+        // If the first token is a command (like .PARAM), there's no title line
+        // This happens when the first line is a comment (which the lexer skips)
+        if matches!(self.peek(), Token::Command(_)) {
+            return None;
+        }
+
         // Collect all tokens until EOL as the title
         let mut title_parts = Vec::new();
 
@@ -280,12 +369,81 @@ impl<'a> Parser<'a> {
         self.parameters.get(&s.to_uppercase()).copied()
     }
 
+    /// Resolve a value string with a specific ParamContext.
+    #[allow(dead_code)]
+    pub(crate) fn resolve_value_with_context(&self, s: &str, ctx: &ParamContext) -> Option<f64> {
+        // First try direct numeric parsing
+        if let Some(val) = parse_value(s) {
+            return Some(val);
+        }
+        // Then try context lookup (with proper precedence)
+        ctx.get(s)
+    }
+
+    /// Evaluate a curly brace expression `{expr}` using the global parameters.
+    pub(crate) fn eval_curly_expr(&self, expr: &str, line: usize) -> Result<f64> {
+        let ctx = ParamContext::from_global(self.parameters.clone());
+        self.eval_curly_expr_with_context(expr, &ctx, line)
+    }
+
+    /// Evaluate a curly brace expression `{expr}` using a specific ParamContext.
+    pub(crate) fn eval_curly_expr_with_context(
+        &self,
+        expr: &str,
+        ctx: &ParamContext,
+        line: usize,
+    ) -> Result<f64> {
+        let merged = ctx.merged();
+        let param_names: HashSet<String> = merged.keys().cloned().collect();
+
+        let parsed = parse_expression_with_params(expr, &param_names).map_err(|e| {
+            Error::ParseError {
+                line,
+                message: format!("invalid expression '{{{}}}': {}", expr, e),
+            }
+        })?;
+
+        let eval_ctx = EvalContext::params_only(&merged);
+        Ok(parsed.eval(&eval_ctx))
+    }
+
     pub(crate) fn expect_value(&mut self, line: usize) -> Result<f64> {
         match self.peek() {
             Token::Value(v) | Token::Name(v) => {
                 let v = v.clone();
                 self.advance();
                 self.resolve_value(&v).ok_or(Error::InvalidValue(v))
+            }
+            Token::CurlyExpr(expr) => {
+                let expr = expr.clone();
+                self.advance();
+                self.eval_curly_expr(&expr, line)
+            }
+            _ => Err(Error::ParseError {
+                line,
+                message: "expected value".to_string(),
+            }),
+        }
+    }
+
+    /// Expect a value, using a specific ParamContext for resolution.
+    #[allow(dead_code)]
+    pub(crate) fn expect_value_with_context(
+        &mut self,
+        line: usize,
+        ctx: &ParamContext,
+    ) -> Result<f64> {
+        match self.peek() {
+            Token::Value(v) | Token::Name(v) => {
+                let v = v.clone();
+                self.advance();
+                self.resolve_value_with_context(&v, ctx)
+                    .ok_or(Error::InvalidValue(v))
+            }
+            Token::CurlyExpr(expr) => {
+                let expr = expr.clone();
+                self.advance();
+                self.eval_curly_expr_with_context(&expr, ctx, line)
             }
             _ => Err(Error::ParseError {
                 line,
@@ -305,6 +463,15 @@ impl<'a> Parser<'a> {
                     None
                 }
             }
+            Token::CurlyExpr(expr) => {
+                let expr = expr.clone();
+                if let Ok(val) = self.eval_curly_expr(&expr, 0) {
+                    self.advance();
+                    Some(val)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -315,6 +482,15 @@ impl<'a> Parser<'a> {
             Token::Value(s) => {
                 let s = s.clone();
                 if let Some(v) = self.resolve_value(&s) {
+                    self.advance();
+                    Some(v)
+                } else {
+                    None
+                }
+            }
+            Token::CurlyExpr(expr) => {
+                let expr = expr.clone();
+                if let Ok(v) = self.eval_curly_expr(&expr, 0) {
                     self.advance();
                     Some(v)
                 } else {
@@ -1299,5 +1475,174 @@ R1 1 0 1k
         assert_eq!(result.measurements[0].name, "vmax");
         assert_eq!(result.measurements[1].name, "vmin");
         assert_eq!(result.measurements[2].name, "vpp");
+    }
+
+    // =========================================================================
+    // Curly brace expression and PARAMS: tests
+    // =========================================================================
+
+    #[test]
+    fn test_curly_expr_simple() {
+        let input = r#"Curly Simple Test
+.PARAM R_VAL=1k
+R1 1 0 {R_VAL}
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.netlist.num_devices(), 1);
+        // The resistor should have value 1000.0 (1k)
+    }
+
+    #[test]
+    fn test_curly_expr_with_expression() {
+        let input = r#"Curly Expression Test
+.PARAM R_VAL=1k
+R1 1 0 {R_VAL*2}
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.netlist.num_devices(), 1);
+        // The resistor should have value 2000.0 (1k*2)
+    }
+
+    #[test]
+    fn test_subckt_params_defaults() {
+        let input = r#"SUBCKT Params Test
+.SUBCKT RES in out PARAMS: R=1k
+R1 in out {R}
+.ENDS RES
+V1 1 0 10
+X1 1 0 RES
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        // Should have V1 and the expanded X1.R1
+        assert_eq!(result.netlist.num_devices(), 2);
+        // X1.R1 should use the default R=1k
+        let subckt = &result.subcircuits["RES"];
+        assert!((subckt.params["R"] - 1000.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_subckt_params_override() {
+        let input = r#"SUBCKT Override Test
+.SUBCKT RES in out PARAMS: R=1k
+R1 in out {R}
+.ENDS RES
+V1 1 0 10
+X1 1 0 RES PARAMS: R=2k
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.netlist.num_devices(), 2);
+        // X1.R1 should use the override R=2k
+    }
+
+    #[test]
+    fn test_subckt_multiple_params() {
+        let input = r#"SUBCKT Multiple Params Test
+.SUBCKT RCFILT in out PARAMS: R=1k C=1u
+R1 in mid {R}
+C1 mid out {C}
+.ENDS RCFILT
+V1 1 0 10
+X1 1 2 RCFILT PARAMS: R=2k C=100n
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        // V1 + X1.R1 + X1.C1
+        assert_eq!(result.netlist.num_devices(), 3);
+    }
+
+    #[test]
+    fn test_nested_subckt_params() {
+        let input = r#"Nested SUBCKT Test
+.SUBCKT INNER a b PARAMS: R=1k
+R1 a b {R}
+.ENDS INNER
+
+.SUBCKT OUTER in out PARAMS: W=1k
+X1 in out INNER PARAMS: R={W*2}
+.ENDS OUTER
+
+V1 1 0 10
+X1 1 0 OUTER PARAMS: W=500
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        // V1 + X1.X1.R1
+        assert_eq!(result.netlist.num_devices(), 2);
+        // R should be W*2 = 500*2 = 1000 ohms
+    }
+
+    #[test]
+    fn test_global_param_in_subckt() {
+        let input = r#"Global Param Test
+.PARAM SCALE=2
+.SUBCKT RES in out PARAMS: R=1k
+R1 in out {R*SCALE}
+.ENDS RES
+V1 1 0 10
+X1 1 0 RES
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.netlist.num_devices(), 2);
+        // X1.R1 should use R*SCALE = 1k*2 = 2k
+    }
+
+    #[test]
+    fn test_param_context_precedence() {
+        // Test that instance params override subcircuit defaults, which override global
+        let input = r#"Precedence Test
+.PARAM R=500
+.SUBCKT TEST in out PARAMS: R=1k
+R1 in out {R}
+.ENDS TEST
+V1 1 0 10
+X1 1 0 TEST PARAMS: R=2k
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.netlist.num_devices(), 2);
+        // X1.R1 should use the instance override R=2k, not subcircuit default R=1k or global R=500
+    }
+
+    #[test]
+    fn test_subckt_without_params() {
+        // Test backward compatibility - subcircuit without PARAMS: should still work
+        let input = r#"No Params Test
+.SUBCKT SIMPLE in out
+R1 in out 1k
+.ENDS SIMPLE
+V1 1 0 10
+X1 1 0 SIMPLE
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.netlist.num_devices(), 2);
+        assert!(result.subcircuits["SIMPLE"].params.is_empty());
+    }
+
+    #[test]
+    fn test_curly_expr_with_functions() {
+        let input = r#"Function Test
+.PARAM A=3 B=4
+R1 1 0 {sqrt(A*A + B*B)}
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.netlist.num_devices(), 1);
+        // R should be sqrt(9+16) = sqrt(25) = 5
     }
 }

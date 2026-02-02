@@ -132,7 +132,8 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
     // If --op flag or no analysis commands, run DC operating point
     if cli.dc_op || analyses.is_empty() {
         let print_vars = get_print_vars(PrintAnalysisType::Dc);
-        run_dc_op(&netlist, &print_vars, &node_map)?;
+        let dc_measurements = get_measurements(MeasureAnalysis::Dc);
+        run_dc_op(&netlist, &print_vars, &node_map, &dc_measurements)?;
     }
 
     // Run each analysis command
@@ -140,11 +141,13 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
         match analysis {
             AnalysisCommand::Op => {
                 let print_vars = get_print_vars(PrintAnalysisType::Dc);
-                run_dc_op(&netlist, &print_vars, &node_map)?;
+                let dc_measurements = get_measurements(MeasureAnalysis::Dc);
+                run_dc_op(&netlist, &print_vars, &node_map, &dc_measurements)?;
             }
             AnalysisCommand::Dc { sweeps } => {
                 let print_vars = get_print_vars(PrintAnalysisType::Dc);
-                run_dc_sweep(&netlist, sweeps, &print_vars, &node_map)?;
+                let dc_measurements = get_measurements(MeasureAnalysis::Dc);
+                run_dc_sweep(&netlist, sweeps, &print_vars, &node_map, &dc_measurements)?;
             }
             AnalysisCommand::Ac {
                 sweep_type,
@@ -153,6 +156,7 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
                 fstop,
             } => {
                 let print_vars = get_print_vars(PrintAnalysisType::Ac);
+                let ac_measurements = get_measurements(MeasureAnalysis::Ac);
                 run_ac_analysis(
                     &netlist,
                     *sweep_type,
@@ -161,6 +165,7 @@ fn run_simulation(input: &PathBuf, cli: &Cli) -> Result<()> {
                     *fstop,
                     &print_vars,
                     &node_map,
+                    &ac_measurements,
                 )?;
             }
             AnalysisCommand::Tran {

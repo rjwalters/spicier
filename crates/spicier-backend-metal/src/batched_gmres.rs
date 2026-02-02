@@ -18,6 +18,257 @@ use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+// ============================================================================
+// GPU Batched Jacobi Preconditioner
+// ============================================================================
+
+/// GPU batched Jacobi (diagonal) preconditioner.
+///
+/// Computes M^{-1} = diag(A)^{-1} for each sweep point.
+/// Simple but effective for diagonally dominant systems like MNA matrices.
+pub struct GpuBatchedJacobi {
+    ctx: Arc<WgpuContext>,
+    pipeline: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+impl GpuBatchedJacobi {
+    /// Create a new GPU Jacobi preconditioner.
+    pub fn new(ctx: Arc<WgpuContext>) -> Result<Self> {
+        let shader = ctx.device().create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Jacobi Preconditioner Shader"),
+            source: wgpu::ShaderSource::Wgsl(JACOBI_SHADER.into()),
+        });
+
+        let layout = ctx.device().create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Jacobi Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = ctx.device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Jacobi Pipeline Layout"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = ctx.device().create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Jacobi Pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("batched_jacobi_apply"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        Ok(Self { ctx, pipeline, layout })
+    }
+
+    /// Extract inverse diagonal from CSR matrix values.
+    ///
+    /// Returns inv_diag[sweep * n + i] = 1.0 / A[i,i] for each sweep.
+    pub fn extract_inv_diagonal(
+        &self,
+        structure: &BatchedCsrMatrix,
+        values: &[f32],
+        num_sweeps: usize,
+    ) -> Vec<f32> {
+        let n = structure.n;
+        let mut inv_diag = vec![1.0f32; num_sweeps * n];
+
+        for sweep in 0..num_sweeps {
+            for row in 0..n {
+                let row_start = structure.row_ptr[row] as usize;
+                let row_end = structure.row_ptr[row + 1] as usize;
+
+                // Find diagonal entry in this row
+                let nnz = structure.col_idx.len();
+                for idx in row_start..row_end {
+                    if structure.col_idx[idx] as usize == row {
+                        let val = values[sweep * nnz + idx];
+                        inv_diag[sweep * n + row] = if val.abs() < 1e-30 { 1.0 } else { 1.0 / val };
+                        break;
+                    }
+                }
+            }
+        }
+
+        inv_diag
+    }
+
+    /// Apply preconditioner: y = M^{-1} * x for all sweeps.
+    pub fn apply(
+        &self,
+        inv_diag: &[f32],
+        x: &[f32],
+        num_sweeps: usize,
+        n: usize,
+    ) -> Result<Vec<f32>> {
+        #[repr(C)]
+        #[derive(Clone, Copy, Pod, Zeroable)]
+        struct Uniforms {
+            n: u32,
+            num_sweeps: u32,
+            _pad: [u32; 2],
+        }
+
+        let uniforms = Uniforms {
+            n: n as u32,
+            num_sweeps: num_sweeps as u32,
+            _pad: [0; 2],
+        };
+
+        let uniform_buffer = self.ctx.device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Jacobi Uniforms"),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+
+        let inv_diag_buffer = self.ctx.device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Jacobi inv_diag"),
+            contents: bytemuck::cast_slice(inv_diag),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let x_buffer = self.ctx.device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Jacobi x"),
+            contents: bytemuck::cast_slice(x),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let output_size = (num_sweeps * n * std::mem::size_of::<f32>()) as u64;
+        let y_buffer = self.ctx.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Jacobi y"),
+            size: output_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let staging = self.ctx.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Jacobi staging"),
+            size: output_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group = self.ctx.device().create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Jacobi Bind Group"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: inv_diag_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: x_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: y_buffer.as_entire_binding() },
+            ],
+        });
+
+        let mut encoder = self.ctx.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Jacobi Encoder"),
+        });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Jacobi Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            let workgroups = ((num_sweeps * n) as u32 + 255) / 256;
+            pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+
+        encoder.copy_buffer_to_buffer(&y_buffer, 0, &staging, 0, output_size);
+        self.ctx.queue().submit(std::iter::once(encoder.finish()));
+
+        // Read back result
+        let buffer_slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        self.ctx.device().poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .map_err(|_| WgpuError::Compute("Failed to receive map result".into()))?
+            .map_err(|e| WgpuError::Buffer(format!("Buffer map failed: {:?}", e)))?;
+
+        let data = buffer_slice.get_mapped_range();
+        let results: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging.unmap();
+
+        Ok(results)
+    }
+}
+
+/// WGSL shader for batched Jacobi preconditioner: y = inv_diag * x
+const JACOBI_SHADER: &str = r#"
+struct Uniforms {
+    n: u32,
+    num_sweeps: u32,
+    _pad0: u32,
+    _pad1: u32,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var<storage, read> inv_diag: array<f32>;
+@group(0) @binding(2) var<storage, read> x: array<f32>;
+@group(0) @binding(3) var<storage, read_write> y: array<f32>;
+
+@compute @workgroup_size(256)
+fn batched_jacobi_apply(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    let total = uniforms.n * uniforms.num_sweeps;
+    if idx >= total {
+        return;
+    }
+    y[idx] = inv_diag[idx] * x[idx];
+}
+"#;
+
+// ============================================================================
+// Batched GMRES Solver
+// ============================================================================
+
 /// Configuration for batched GMRES solver.
 #[derive(Clone, Debug)]
 pub struct BatchedGmresConfig {
@@ -29,6 +280,8 @@ pub struct BatchedGmresConfig {
     pub rel_tol: f32,
     /// Absolute tolerance for convergence.
     pub abs_tol: f32,
+    /// Use Jacobi preconditioning.
+    pub use_jacobi: bool,
 }
 
 impl Default for BatchedGmresConfig {
@@ -38,6 +291,7 @@ impl Default for BatchedGmresConfig {
             max_restarts: 10,
             rel_tol: 1e-6,
             abs_tol: 1e-10,
+            use_jacobi: false,
         }
     }
 }
@@ -64,6 +318,8 @@ pub struct GpuBatchedGmres {
     ctx: Arc<WgpuContext>,
     spmv: GpuBatchedSpmv,
     vector_ops: GpuBatchedVectorOps,
+    jacobi: Option<GpuBatchedJacobi>,
+    #[allow(dead_code)]
     config: BatchedGmresConfig,
 }
 
@@ -72,7 +328,12 @@ impl GpuBatchedGmres {
     pub fn new(ctx: Arc<WgpuContext>, config: BatchedGmresConfig) -> Result<Self> {
         let spmv = GpuBatchedSpmv::new(ctx.clone())?;
         let vector_ops = GpuBatchedVectorOps::new(ctx.clone())?;
-        Ok(Self { ctx, spmv, vector_ops, config })
+        let jacobi = if config.use_jacobi {
+            Some(GpuBatchedJacobi::new(ctx.clone())?)
+        } else {
+            None
+        };
+        Ok(Self { ctx, spmv, vector_ops, jacobi, config })
     }
 
     /// Solve A*x = b for all sweep points.
@@ -96,6 +357,13 @@ impl GpuBatchedGmres {
     ) -> Result<BatchedGmresResult> {
         let n = structure.n;
 
+        // Extract preconditioner diagonal if using Jacobi
+        let inv_diag = if let Some(ref jacobi) = self.jacobi {
+            Some(jacobi.extract_inv_diagonal(structure, values, num_sweeps))
+        } else {
+            None
+        };
+
         // Initialize solution with x0 or zeros
         let mut x: Vec<f32> = match x0 {
             Some(initial) => initial.to_vec(),
@@ -111,8 +379,13 @@ impl GpuBatchedGmres {
         let ax = self.spmv.multiply(structure, values, &x, num_sweeps)?;
         let mut r = self.vector_ops.axpy(b, &ax, 1.0, -1.0, num_sweeps, n)?;
 
+        // Apply preconditioner to residual if using Jacobi (left preconditioning)
+        if let (Some(jacobi), Some(inv_d)) = (&self.jacobi, &inv_diag) {
+            r = jacobi.apply(inv_d, &r, num_sweeps, n)?;
+        }
+
         // Compute initial residual norms
-        let r_norms = self.vector_ops.norms(&r, num_sweeps, n)?;
+        let mut r_norms = self.vector_ops.norms(&r, num_sweeps, n)?;
         let b_norms = self.vector_ops.norms(b, num_sweeps, n)?;
 
         // Store initial norms for convergence check
@@ -136,7 +409,7 @@ impl GpuBatchedGmres {
 
             // Arnoldi process to build Krylov basis
             // V: orthonormal basis vectors (k+1 vectors of size n × num_sweeps)
-            // H: upper Hessenberg matrix (k+1 × k × num_sweeps)
+            // H: upper Hessenberg matrix stored column-wise
             let mut v_basis: Vec<Vec<f32>> = Vec::with_capacity(self.config.max_krylov + 1);
             let mut h_matrix: Vec<Vec<f32>> = Vec::with_capacity(self.config.max_krylov);
 
@@ -152,18 +425,25 @@ impl GpuBatchedGmres {
             v_basis.push(v0);
 
             // Initialize Givens rotation state for least squares
-            // We maintain the QR factorization of H progressively
+            // g_rhs[i] tracks the full transformed RHS for sweep i: initially [beta, 0, 0, ...]
+            // After k iterations, g_rhs[i][0..k] is the RHS for back-substitution,
+            // and g_rhs[i][k] is the residual norm
             let mut g_cos: Vec<Vec<f32>> = Vec::new();
             let mut g_sin: Vec<Vec<f32>> = Vec::new();
-            let mut g_e: Vec<f32> = r_norms.clone(); // Right-hand side of least squares
+            let mut g_rhs: Vec<Vec<f32>> = (0..num_sweeps)
+                .map(|i| vec![r_norms[i]])
+                .collect();
 
             let mut k = 0;
             while k < self.config.max_krylov {
-                // w = A * v_k
-                let w = self.spmv.multiply(structure, values, &v_basis[k], num_sweeps)?;
-                let mut w = w;
+                // w = A * v_k (or M^{-1} * A * v_k for left preconditioning)
+                let mut w = self.spmv.multiply(structure, values, &v_basis[k], num_sweeps)?;
+                if let (Some(jacobi), Some(inv_d)) = (&self.jacobi, &inv_diag) {
+                    w = jacobi.apply(inv_d, &w, num_sweeps, n)?;
+                }
 
                 // Orthogonalization: modified Gram-Schmidt
+                // h_col stores H[0..k+2, k] for all sweeps: h_col[i * (k+2) + j] = H[j,k] for sweep i
                 let mut h_col = vec![0.0f32; num_sweeps * (k + 2)];
 
                 for j in 0..=k {
@@ -201,7 +481,7 @@ impl GpuBatchedGmres {
                 }
                 v_basis.push(v_next);
 
-                // Apply previous Givens rotations to new column
+                // Apply previous Givens rotations to new column of H
                 for (j, (cos, sin)) in g_cos.iter().zip(g_sin.iter()).enumerate() {
                     for i in 0..num_sweeps {
                         let idx1 = i * (k + 2) + j;
@@ -213,7 +493,7 @@ impl GpuBatchedGmres {
                     }
                 }
 
-                // Compute new Givens rotation for (k, k+1)
+                // Compute new Givens rotation to eliminate H[k+1, k]
                 let mut cos_k = vec![0.0f32; num_sweeps];
                 let mut sin_k = vec![0.0f32; num_sweeps];
                 for i in 0..num_sweeps {
@@ -221,31 +501,32 @@ impl GpuBatchedGmres {
                     let idx2 = i * (k + 2) + k + 1;
                     let h1 = h_matrix[k][idx1];
                     let h2 = h_matrix[k][idx2];
-                    let r = (h1 * h1 + h2 * h2).sqrt().max(1e-30);
-                    cos_k[i] = h1 / r;
-                    sin_k[i] = h2 / r;
+                    let rho = (h1 * h1 + h2 * h2).sqrt().max(1e-30);
+                    cos_k[i] = h1 / rho;
+                    sin_k[i] = h2 / rho;
 
-                    // Apply to H
-                    h_matrix[k][idx1] = r;
+                    // Apply to H (makes H[k+1,k] = 0)
+                    h_matrix[k][idx1] = rho;
                     h_matrix[k][idx2] = 0.0;
                 }
 
-                // Apply to residual vector
-                let mut g_e_new = vec![0.0f32; num_sweeps];
+                // Apply new Givens rotation to the RHS vector
+                // g_rhs[i] currently has k+1 elements; rotation affects indices k and k+1
                 for i in 0..num_sweeps {
-                    let e_old = g_e[i];
-                    g_e[i] = cos_k[i] * e_old;
-                    g_e_new[i] = -sin_k[i] * e_old;
+                    let rhs_k = g_rhs[i][k];
+                    // Element at position k+1 is 0 before this rotation
+                    g_rhs[i][k] = cos_k[i] * rhs_k;
+                    g_rhs[i].push(-sin_k[i] * rhs_k);
                 }
 
                 g_cos.push(cos_k);
                 g_sin.push(sin_k);
 
-                // Check convergence
+                // Check convergence: residual norm is |g_rhs[i][k+1]|
                 let mut all_converged = true;
                 for i in 0..num_sweeps {
                     if !converged[i] {
-                        let res_norm = g_e_new[i].abs();
+                        let res_norm = g_rhs[i][k + 1].abs();
                         iterations[i] += 1;
                         if res_norm <= self.config.abs_tol ||
                            res_norm <= self.config.rel_tol * initial_norms[i] {
@@ -258,7 +539,6 @@ impl GpuBatchedGmres {
                     }
                 }
 
-                g_e = g_e_new;
                 k += 1;
 
                 if all_converged {
@@ -266,32 +546,33 @@ impl GpuBatchedGmres {
                 }
             }
 
-            // Solve upper triangular system H_k * y = e for each sweep
+            // Solve upper triangular system R * y = g_rhs[0..k] for each sweep
+            // R is k x k upper triangular (the rotated H matrix)
             // Then update x = x + V_k * y
             if k > 0 {
                 // Back substitution for y
+                // y[j][i] = y_j for sweep i
                 let mut y = vec![vec![0.0f32; num_sweeps]; k];
+
                 for j in (0..k).rev() {
                     for i in 0..num_sweeps {
-                        let mut sum = if j == 0 { r_norms[i] * (if j < g_cos.len() { g_cos[j][i] } else { 1.0 }) } else { 0.0 };
-                        // This is a simplified version - full implementation would track the transformed RHS
-                        // For now, use the residual norm times Givens products
-                        let mut rhs = r_norms[i];
-                        for l in 0..j {
-                            if l < g_cos.len() {
-                                rhs *= g_cos[l][i];
-                            }
-                        }
-                        sum = rhs;
+                        // RHS for this equation
+                        let mut rhs = g_rhs[i][j];
+
+                        // Subtract contributions from already-computed y values
+                        // H is stored column-wise: h_matrix[col][i * (col+2) + row]
+                        // For row j, we need H[j, l] for l > j, which is in h_matrix[l]
                         for l in (j + 1)..k {
+                            // H[j, l] for sweep i
                             let h_jl_idx = i * (l + 2) + j;
-                            if h_jl_idx < h_matrix[l].len() {
-                                sum -= h_matrix[l][h_jl_idx] * y[l][i];
-                            }
+                            let h_jl = h_matrix[l][h_jl_idx];
+                            rhs -= h_jl * y[l][i];
                         }
+
+                        // Divide by diagonal: H[j, j]
                         let h_jj_idx = i * (j + 2) + j;
-                        let h_jj = if h_jj_idx < h_matrix[j].len() { h_matrix[j][h_jj_idx] } else { 1.0 };
-                        y[j][i] = sum / h_jj.max(1e-30);
+                        let h_jj = h_matrix[j][h_jj_idx].max(1e-30);
+                        y[j][i] = rhs / h_jj;
                     }
                 }
 
@@ -310,10 +591,13 @@ impl GpuBatchedGmres {
             // Recompute residual for next restart
             let ax = self.spmv.multiply(structure, values, &x, num_sweeps)?;
             r = self.vector_ops.axpy(b, &ax, 1.0, -1.0, num_sweeps, n)?;
-            let new_norms = self.vector_ops.norms(&r, num_sweeps, n)?;
+            if let (Some(jacobi), Some(inv_d)) = (&self.jacobi, &inv_diag) {
+                r = jacobi.apply(inv_d, &r, num_sweeps, n)?;
+            }
+            r_norms = self.vector_ops.norms(&r, num_sweeps, n)?;
             for i in 0..num_sweeps {
                 if !converged[i] {
-                    residuals[i] = new_norms[i];
+                    residuals[i] = r_norms[i];
                 }
             }
         }
@@ -986,7 +1270,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "GMRES back-substitution needs refinement for non-identity matrices"]
     fn test_gmres_diagonal() {
         let ctx = match create_context() {
             Ok(c) => c,
@@ -1015,5 +1298,101 @@ mod tests {
         assert!((result.x[0] - 1.0).abs() < 1e-4, "x[0] = {}", result.x[0]);
         assert!((result.x[1] - 2.0).abs() < 1e-4, "x[1] = {}", result.x[1]);
         assert!((result.x[2] - 3.0).abs() < 1e-4, "x[2] = {}", result.x[2]);
+    }
+
+    #[test]
+    fn test_jacobi_apply() {
+        let ctx = match create_context() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let jacobi = GpuBatchedJacobi::new(ctx).unwrap();
+
+        // inv_diag = [0.5, 0.25, 0.2] (1/2, 1/4, 1/5)
+        let inv_diag = vec![0.5, 0.25, 0.2];
+        let x = vec![4.0, 8.0, 10.0];
+
+        let y = jacobi.apply(&inv_diag, &x, 1, 3).unwrap();
+
+        // y = inv_diag * x = [2, 2, 2]
+        assert!((y[0] - 2.0).abs() < 1e-6, "y[0] = {}", y[0]);
+        assert!((y[1] - 2.0).abs() < 1e-6, "y[1] = {}", y[1]);
+        assert!((y[2] - 2.0).abs() < 1e-6, "y[2] = {}", y[2]);
+    }
+
+    #[test]
+    fn test_gmres_with_jacobi() {
+        let ctx = match create_context() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let config = BatchedGmresConfig {
+            use_jacobi: true,
+            ..Default::default()
+        };
+        let gmres = GpuBatchedGmres::new(ctx, config).unwrap();
+
+        // Solve diag([2, 3, 4]) * x = [2, 6, 12]
+        // Expected: x = [1, 2, 3]
+        let structure = BatchedCsrMatrix::new(
+            3,
+            vec![0, 1, 2, 3],
+            vec![0, 1, 2],
+        );
+        let values = vec![2.0, 3.0, 4.0];
+        let b = vec![2.0, 6.0, 12.0];
+
+        let result = gmres.solve(&structure, &values, &b, None, 1).unwrap();
+
+        assert!(result.converged[0], "GMRES with Jacobi did not converge");
+        assert!((result.x[0] - 1.0).abs() < 1e-4, "x[0] = {}", result.x[0]);
+        assert!((result.x[1] - 2.0).abs() < 1e-4, "x[1] = {}", result.x[1]);
+        assert!((result.x[2] - 3.0).abs() < 1e-4, "x[2] = {}", result.x[2]);
+    }
+
+    #[test]
+    fn test_gmres_batched_diagonal() {
+        let ctx = match create_context() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let config = BatchedGmresConfig::default();
+        let gmres = GpuBatchedGmres::new(ctx, config).unwrap();
+
+        // Solve 2 systems in parallel:
+        // System 0: diag([2, 3]) * x = [4, 9] => x = [2, 3]
+        // System 1: diag([1, 2]) * x = [5, 8] => x = [5, 4]
+        let structure = BatchedCsrMatrix::new(
+            2,
+            vec![0, 1, 2],
+            vec![0, 1],
+        );
+        // values = [sweep0 values, sweep1 values] = [2, 3, 1, 2]
+        let values = vec![2.0, 3.0, 1.0, 2.0];
+        // b = [sweep0 b, sweep1 b] = [4, 9, 5, 8]
+        let b = vec![4.0, 9.0, 5.0, 8.0];
+
+        let result = gmres.solve(&structure, &values, &b, None, 2).unwrap();
+
+        assert!(result.converged[0], "Sweep 0 did not converge");
+        assert!(result.converged[1], "Sweep 1 did not converge");
+        // Sweep 0: x = [2, 3]
+        assert!((result.x[0] - 2.0).abs() < 1e-4, "x[0] = {}", result.x[0]);
+        assert!((result.x[1] - 3.0).abs() < 1e-4, "x[1] = {}", result.x[1]);
+        // Sweep 1: x = [5, 4]
+        assert!((result.x[2] - 5.0).abs() < 1e-4, "x[2] = {}", result.x[2]);
+        assert!((result.x[3] - 4.0).abs() < 1e-4, "x[3] = {}", result.x[3]);
     }
 }

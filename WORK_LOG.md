@@ -1956,3 +1956,82 @@ let result = pipeline.execute(&factory, &points, system_size)?;
 - Remainder chunk handling
 
 **Note:** True async GPU dispatch was deprioritized based on 9b-1 analysis showing GPU is 3-13x slower than parallel CPU for batched LU on Apple Silicon. The pipelining infrastructure is in place for future CUDA optimization or if GPU performance improves.
+
+
+## 2026-02-02
+
+### Phase 12b: .MEASURE Statement Implementation - COMPLETE
+
+Completed measurement evaluation for all analysis types, wiring the measurement infrastructure into the CLI output. This picks up from earlier work that added the parser and AST types.
+
+**MeasureEvaluator extensions (`spicier-solver/src/measure.rs`):**
+
+Added three new evaluation methods to support all analysis types:
+
+- `eval_dc(meas, solution, node_map)` — DC operating point measurements
+  - Simple value extraction for single-point analysis
+  - Statistics degrade gracefully (PP=0, INTEG=0 for single point)
+
+- `eval_dc_sweep(meas, result, node_map)` — DC sweep measurements
+  - `FindAt` — interpolate value at specific sweep point
+  - `FindWhen` — find value when another signal crosses threshold
+  - `TrigTarg` — measure sweep point difference between crossings
+  - `Statistic` — MIN, MAX, AVG, RMS, PP, INTEG across sweep range
+  - Uses linear interpolation between sweep points
+
+- `eval_ac(meas, result, node_map)` — AC analysis measurements
+  - Expression types: `V(node)`, `VM(node)` (magnitude), `VDB(node)` (dB), `VP(node)` (phase)
+  - `FindAt` — log-frequency interpolation for accuracy
+  - `FindWhen` — find value when magnitude/phase crosses threshold
+  - `TrigTarg` — returns frequency ratio (useful for bandwidth: f_high/f_low)
+  - `Statistic` — statistics across frequency range
+
+**Helper functions added:**
+- `extract_dc_value()` — extract V(node) from DC solution
+- `extract_dc_sweep_waveform()` — extract waveform across DC sweep points
+- `extract_ac_waveform()` — extract magnitude/dB/phase from AC results
+- `interpolate_log_freq()` — log-scale frequency interpolation for AC
+
+**CLI integration (`spicier-cli/src/analysis/`):**
+
+Updated all analysis functions to accept and evaluate measurements:
+
+- `run_dc_op()` — added measurements parameter, evaluates DC measurements
+- `run_dc_sweep()` → `run_single_dc_sweep()` — evaluates DC sweep measurements
+- `run_nested_dc_sweep()` — accepts parameter (measurement eval not yet implemented for nested)
+- `run_ac_analysis()` — evaluates AC measurements
+
+All functions print measurements in consistent tabular format:
+```
+Measurements:
+--------------------------------------------------
+delay        = 1.234567e-06
+peak_voltage = 2.345678e+00
+...
+```
+
+**main.rs updates:**
+- DC operating point (`.OP`) passes DC measurements
+- DC sweep (`.DC`) passes DC measurements
+- AC analysis (`.AC`) passes AC measurements
+- Existing TRAN measurement passing unchanged
+
+**Measurement types supported:**
+
+| Analysis | FindAt | FindWhen | TrigTarg | Statistics |
+|----------|--------|----------|----------|------------|
+| TRAN     | ✅     | ✅       | ✅       | ✅         |
+| DC OP    | ✅     | ❌       | ❌       | ✅*        |
+| DC Sweep | ✅     | ✅       | ✅       | ✅         |
+| AC       | ✅     | ✅       | ✅**     | ✅         |
+
+*Single-point statistics: PP=0, INTEG=0
+**Returns frequency ratio instead of difference
+
+**Tests:** All existing tests pass (4 measure tests, full test suite)
+
+**Files modified:**
+- `crates/spicier-solver/src/measure.rs` (added eval_dc, eval_dc_sweep, eval_ac + helpers)
+- `crates/spicier-cli/src/analysis/dc.rs` (added measurements parameter + evaluation)
+- `crates/spicier-cli/src/analysis/ac.rs` (added measurements parameter + evaluation)
+- `crates/spicier-cli/src/main.rs` (pass measurements to all analysis functions)

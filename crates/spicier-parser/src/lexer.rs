@@ -33,6 +33,8 @@ pub enum Token {
     Slash,
     /// Power operator
     Caret,
+    /// Curly brace expression: `{expr}` - contains the expression content without braces
+    CurlyExpr(String),
 }
 
 /// A token with its source location.
@@ -193,6 +195,15 @@ impl<'a> Lexer<'a> {
                     column,
                 })
             }
+            Some('{') => {
+                let expr = self.read_curly_expr(line)?;
+                self.at_line_start = false;
+                Ok(SpannedToken {
+                    token: Token::CurlyExpr(expr),
+                    line,
+                    column,
+                })
+            }
             Some(c) => Err(Error::ParseError {
                 line,
                 message: format!("unexpected character: '{}'", c),
@@ -256,6 +267,11 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
+        // Include trailing colon for keywords like "PARAMS:"
+        if let Some(':') = self.peek_char() {
+            ident.push(':');
+            self.advance();
+        }
         ident
     }
 
@@ -317,6 +333,51 @@ impl<'a> Lexer<'a> {
         }
 
         value
+    }
+
+    /// Read content between `{` and `}`, handling nested braces.
+    fn read_curly_expr(&mut self, start_line: usize) -> Result<String> {
+        // Consume the opening brace
+        self.advance();
+
+        let mut expr = String::new();
+        let mut depth = 1;
+
+        while depth > 0 {
+            match self.peek_char() {
+                None => {
+                    return Err(Error::ParseError {
+                        line: start_line,
+                        message: "unclosed curly brace expression".to_string(),
+                    });
+                }
+                Some('\n') => {
+                    return Err(Error::ParseError {
+                        line: start_line,
+                        message: "unclosed curly brace expression (newline before closing brace)"
+                            .to_string(),
+                    });
+                }
+                Some('{') => {
+                    expr.push('{');
+                    self.advance();
+                    depth += 1;
+                }
+                Some('}') => {
+                    self.advance();
+                    depth -= 1;
+                    if depth > 0 {
+                        expr.push('}');
+                    }
+                }
+                Some(c) => {
+                    expr.push(c);
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(expr)
     }
 }
 
@@ -397,5 +458,66 @@ mod tests {
                 .iter()
                 .any(|t| t.token == Token::Value("1e-12".into()))
         );
+    }
+
+    #[test]
+    fn test_curly_expr_simple() {
+        let input = "R1 1 0 {R_VAL}";
+        let lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.token == Token::CurlyExpr("R_VAL".into()))
+        );
+    }
+
+    #[test]
+    fn test_curly_expr_with_expression() {
+        let input = "R1 1 0 {R_VAL*2}";
+        let lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.token == Token::CurlyExpr("R_VAL*2".into()))
+        );
+    }
+
+    #[test]
+    fn test_curly_expr_nested() {
+        let input = "R1 1 0 {func({inner})}";
+        let lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.token == Token::CurlyExpr("func({inner})".into()))
+        );
+    }
+
+    #[test]
+    fn test_curly_expr_unclosed() {
+        let input = "R1 1 0 {R_VAL";
+        let lexer = Lexer::new(input);
+        let result = lexer.tokenize();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("unclosed curly brace"));
+    }
+
+    #[test]
+    fn test_curly_expr_unclosed_newline() {
+        let input = "R1 1 0 {R_VAL\nR2 2 0 1k";
+        let lexer = Lexer::new(input);
+        let result = lexer.tokenize();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("unclosed curly brace"));
     }
 }

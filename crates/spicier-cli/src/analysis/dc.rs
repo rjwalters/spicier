@@ -4,9 +4,10 @@ use anyhow::Result;
 use nalgebra::DVector;
 use spicier_core::NodeId;
 use spicier_core::mna::MnaSystem;
-use spicier_parser::{DcSweepSpec, OutputVariable};
+use spicier_parser::{DcSweepSpec, Measurement, OutputVariable};
 use spicier_solver::{
-    ConvergenceCriteria, DcSolution, DcSweepParams, solve_dc, solve_dc_sweep, solve_newton_raphson,
+    ConvergenceCriteria, DcSolution, DcSweepParams, MeasureEvaluator, solve_dc, solve_dc_sweep,
+    solve_newton_raphson,
 };
 use std::collections::HashMap;
 
@@ -18,6 +19,7 @@ pub fn run_dc_op(
     netlist: &spicier_core::Netlist,
     print_vars: &[&OutputVariable],
     node_map: &HashMap<String, NodeId>,
+    measurements: &[&Measurement],
 ) -> Result<()> {
     println!("DC Operating Point Analysis");
     println!("===========================");
@@ -68,6 +70,35 @@ pub fn run_dc_op(
 
     print_dc_solution(netlist, &solution, print_vars, node_map);
 
+    // Evaluate and print measurements
+    if !measurements.is_empty() {
+        println!();
+        println!("Measurements:");
+        println!("{}", "-".repeat(50));
+
+        // Build node name to MNA index map for measurement evaluation
+        let mna_node_map: HashMap<String, usize> = node_map
+            .iter()
+            .filter_map(|(name, node_id)| {
+                if node_id.is_ground() {
+                    None
+                } else {
+                    Some((name.clone(), node_id.as_u32() as usize - 1))
+                }
+            })
+            .collect();
+
+        for meas in measurements {
+            let meas_result = MeasureEvaluator::eval_dc(meas, &solution, &mna_node_map);
+            if let Some(value) = meas_result.value {
+                println!("{} = {:12.6e}", meas_result.name, value);
+            } else if let Some(err) = meas_result.error {
+                println!("{} = FAILED ({})", meas_result.name, err);
+            }
+        }
+        println!();
+    }
+
     println!("Analysis complete.");
     println!();
     Ok(())
@@ -79,6 +110,7 @@ pub fn run_dc_sweep(
     sweeps: &[DcSweepSpec],
     print_vars: &[&OutputVariable],
     node_map: &HashMap<String, NodeId>,
+    measurements: &[&Measurement],
 ) -> Result<()> {
     if sweeps.is_empty() {
         return Err(anyhow::anyhow!("No sweep specifications provided"));
@@ -86,10 +118,10 @@ pub fn run_dc_sweep(
 
     if sweeps.len() == 1 {
         // Single sweep
-        run_single_dc_sweep(netlist, &sweeps[0], print_vars, node_map)
+        run_single_dc_sweep(netlist, &sweeps[0], print_vars, node_map, measurements)
     } else {
         // Nested sweep (2 variables)
-        run_nested_dc_sweep(netlist, &sweeps[0], &sweeps[1], print_vars, node_map)
+        run_nested_dc_sweep(netlist, &sweeps[0], &sweeps[1], print_vars, node_map, measurements)
     }
 }
 
@@ -99,6 +131,7 @@ fn run_single_dc_sweep(
     sweep: &DcSweepSpec,
     print_vars: &[&OutputVariable],
     node_map: &HashMap<String, NodeId>,
+    measurements: &[&Measurement],
 ) -> Result<()> {
     println!(
         "DC Sweep Analysis (.DC {} {} {} {})",
@@ -148,6 +181,36 @@ fn run_single_dc_sweep(
 
     println!();
     println!("Sweep complete ({} points).", result.sweep_values.len());
+
+    // Evaluate and print measurements
+    if !measurements.is_empty() {
+        println!();
+        println!("Measurements:");
+        println!("{}", "-".repeat(50));
+
+        // Build node name to MNA index map for measurement evaluation
+        let mna_node_map: HashMap<String, usize> = node_map
+            .iter()
+            .filter_map(|(name, node_id)| {
+                if node_id.is_ground() {
+                    None
+                } else {
+                    Some((name.clone(), node_id.as_u32() as usize - 1))
+                }
+            })
+            .collect();
+
+        for meas in measurements {
+            let meas_result = MeasureEvaluator::eval_dc_sweep(meas, &result, &mna_node_map);
+            if let Some(value) = meas_result.value {
+                println!("{} = {:12.6e}", meas_result.name, value);
+            } else if let Some(err) = meas_result.error {
+                println!("{} = FAILED ({})", meas_result.name, err);
+            }
+        }
+        println!();
+    }
+
     println!();
     Ok(())
 }
@@ -159,6 +222,7 @@ fn run_nested_dc_sweep(
     inner_sweep: &DcSweepSpec,
     print_vars: &[&OutputVariable],
     node_map: &HashMap<String, NodeId>,
+    _measurements: &[&Measurement],
 ) -> Result<()> {
     println!(
         "Nested DC Sweep Analysis (.DC {} {} {} {} {} {} {} {})",

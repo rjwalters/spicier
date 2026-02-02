@@ -131,15 +131,23 @@ pub struct SubcircuitDefinition {
     pub elements: Vec<RawElementLine>,
     /// Nested subcircuit instantiations (X lines).
     pub instances: Vec<RawElementLine>,
+    /// Parameter defaults from PARAMS: section (e.g., `PARAMS: W=1u L=100n`).
+    pub params: HashMap<String, f64>,
 }
 
 impl SubcircuitDefinition {
-    pub(super) fn new(name: String, ports: Vec<String>) -> Self {
+    /// Create a new subcircuit definition with optional parameter defaults.
+    pub(super) fn new_with_params(
+        name: String,
+        ports: Vec<String>,
+        params: HashMap<String, f64>,
+    ) -> Self {
         Self {
             name,
             ports,
             elements: Vec::new(),
             instances: Vec::new(),
+            params,
         }
     }
 }

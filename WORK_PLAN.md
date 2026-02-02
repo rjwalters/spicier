@@ -876,7 +876,7 @@ If f32 precision causes convergence failures in batched solves:
 
 This is a fallback, not the primary approach. Most circuits solve fine in f32.
 
-### 9c: GPU-Native Massively Parallel Sweeps ⬅️ ACTIVE DEVELOPMENT
+### 9c: GPU-Native Massively Parallel Sweeps ✅ CORE COMPLETE
 
 **Vision:** Run 1000s of sweep points entirely on GPU with minimal CPU involvement. Target: 10k+ sweep points solving in parallel, GB-scale working sets.
 
@@ -886,8 +886,8 @@ This is a fallback, not the primary approach. Most circuits solve fine in f32.
 - ✅ 9c-1 BJT kernel: **107M evals/sec** achieved
 - ✅ 9c-2 Matrix assembly: **187M stamps/sec** achieved
 - ✅ 9c-2 RHS assembly: **463M stamps/sec** achieved
-- ⬜ 9c-3 GMRES solver: Batched iterative solve
-- ⬜ 9c-4 NR loop: Full GPU integration
+- ✅ 9c-3 GMRES solver: Batched iterative solve with Jacobi preconditioner
+- ✅ 9c-4 NR loop: Full GPU Newton-Raphson integration
 
 **Architecture - No CPU Round-Trips:**
 ```
@@ -937,7 +937,7 @@ Parallel stamping into sparse matrices.
   - Stamps equivalent currents (Ieq) from device linearization
   - **463M stamps/sec** on M3 Ultra
 
-#### 9c-3: GPU Iterative Solver (GMRES) ⬅️ IN PROGRESS
+#### 9c-3: GPU Iterative Solver (GMRES) ✅ COMPLETE
 
 Batched GMRES is more parallelizable than LU (no pivot dependencies).
 
@@ -954,35 +954,45 @@ Batched GMRES is more parallelizable than LU (no pivot dependencies).
   - `GpuBatchedGmres` with Arnoldi orthogonalization
   - Givens rotations for least squares
   - Per-sweep convergence tracking
-  - Works for identity matrices (back-substitution needs refinement)
-- [ ] Preconditioner
+  - Full back-substitution for general matrices
+- [x] Jacobi preconditioner ✅
+  - `GpuBatchedJacobi` with WGSL compute shader
+  - Extracts inverse diagonal from CSR matrix
+  - Left preconditioning: M^{-1}Ax = M^{-1}b
+  - Integrated into GMRES via `BatchedGmresConfig::use_jacobi`
+- [ ] Advanced preconditioning (optional, future)
   - ILU(0) computed once from nominal matrix
-  - Shared preconditioner across similar sweep points
-  - Or: Jacobi/block-Jacobi (trivially parallel)
-  - Or: Jacobi/block-Jacobi (trivially parallel)
-- [ ] Convergence tracking
-  - Per-sweep residual norms
-  - Early termination mask for converged sweeps
-  - Compact active set or skip via masking
+  - Block-Jacobi for better convergence on block-structured matrices
 
-**Target:** Solve 1000× 100-node systems in <10ms
+#### 9c-4: GPU-Native Newton-Raphson Loop ✅ COMPLETE
 
-#### 9c-4: GPU-Native Newton-Raphson Loop
+Full NR iteration on GPU with minimal CPU involvement.
 
-Full NR iteration on GPU without CPU involvement.
+- [x] NR iteration kernel orchestration ✅
+  - `GpuNewtonRaphson` orchestrator with all GPU components
+  - Device eval → Matrix assembly → GMRES solve → Update → Check convergence
+  - All steps on GPU, only single u32 `active_count` sync per iteration
+- [x] Solution update with voltage limiting ✅
+  - `GpuSolutionUpdate` WGSL kernel
+  - PN junction voltage limiting for convergence stability
+  - Maximum step limiting for large updates
+  - Active mask skips converged sweeps
+- [x] Convergence checking ✅
+  - `GpuConvergenceCheck` WGSL kernel
+  - Parallel reduction for voltage/current tolerances
+  - Per-sweep convergence status with iteration counts
+  - Tree-based parallel reduction for active count
+- [x] Circuit topology and stamping ✅
+  - `GpuCircuitTopology` with CSR structure and device mappings
+  - `MosfetStampLocations`, `DiodeStampLocations`, `BjtStampLocations`
+  - Companion model linearization (Ieq = Id - gd*Vd)
+  - Linear elements (resistors, sources) in base CSR values
+- [x] Full integration ✅
+  - `GpuNrConfig` with configurable tolerances
+  - `GpuNrResult` with solutions, convergence status, iteration counts
+  - Diode circuit test converges in 2 iterations to ~0.82V
 
-- [ ] NR iteration kernel orchestration
-  - Device eval → Matrix assembly → Solve → Update → Check convergence
-  - All steps on GPU, only sync for iteration count
-- [ ] Solution update with damping
-  - Line search / damping factor on GPU
-  - Voltage limiting for nonlinear devices
-- [ ] Convergence checking
-  - Parallel max-reduction for voltage/current tolerances
-  - Per-sweep convergence status array
-- [ ] Iteration management
-  - CPU only decides "continue or stop"
-  - Converged sweeps masked out, not removed (simpler)
+**Implementation:** `crates/spicier-backend-metal/src/gpu_newton.rs` (~1750 lines)
 
 #### 9c-5: Memory Management for Large Sweeps
 
@@ -1035,8 +1045,8 @@ For circuits with 50k+ nodes, sparse LU factorization itself is the bottleneck.
 - [x] Parallel CPU sweeps with rayon achieve 6-7x speedup
 - [x] Performance documented with clear GPU vs CPU recommendations
 - [ ] 10k-point sweep with GPU device eval + CPU solve completes
-- [ ] Full GPU NR loop (device eval → assembly → solve → converge) working
-- [ ] All results match CPU reference to within solver tolerance
+- [x] Full GPU NR loop (device eval → assembly → solve → converge) working
+- [x] All results match CPU reference to within solver tolerance (diode test verified)
 
 **Revised Strategy (based on benchmarking):**
 1. **Device evaluation** → GPU (167M evals/sec achieved)
@@ -1268,17 +1278,28 @@ Parameter expressions enable parameterized circuits and design exploration.
 - [ ] Global vs local parameter scoping
 - [ ] Integration with DC sweep (sweep parameter values)
 
-### 12b: .MEASURE Statements
+### 12b: .MEASURE Statements ✅ COMPLETE
 
 Post-processing measurements extract key metrics from simulation results.
 
-- [ ] `.MEAS TRAN` — transient measurements
-  - `TRIG`/`TARG` for timing measurements
-  - `FIND`/`WHEN` for value extraction
-  - `AVG`, `RMS`, `MIN`, `MAX`, `PP` (peak-to-peak)
-- [ ] `.MEAS DC` — DC sweep measurements
-- [ ] `.MEAS AC` — AC analysis measurements
-- [ ] Measurement result output and export
+- [x] `.MEAS TRAN` — transient measurements
+  - `TRIG`/`TARG` for timing measurements (delay between threshold crossings)
+  - `FIND`/`WHEN` for value extraction (find signal value when condition met)
+  - `FIND`/`AT` for value at specific time point
+  - `AVG`, `RMS`, `MIN`, `MAX`, `PP` (peak-to-peak), `INTEG` (trapezoidal integration)
+- [x] `.MEAS DC` — DC sweep measurements
+  - DC operating point: simple value extraction
+  - DC sweep: `FIND`/`AT` (value at sweep point), `FIND`/`WHEN` (value when condition met)
+  - DC sweep: `TRIG`/`TARG` (sweep point difference between threshold crossings)
+  - DC sweep: Statistics (`AVG`, `MIN`, `MAX`, etc.) across sweep range
+- [x] `.MEAS AC` — AC analysis measurements
+  - Magnitude (`V`, `VM`), dB (`VDB`), and phase (`VP`) expressions
+  - `FIND`/`AT` with log-frequency interpolation
+  - `FIND`/`WHEN` for finding values at threshold crossings
+  - `TRIG`/`TARG` for frequency ratio measurements (bandwidth)
+  - Statistics across frequency range
+- [x] Measurement result output in CLI (tabular format)
+- [x] Error reporting for failed measurements
 
 ### 12c: Noise Analysis
 

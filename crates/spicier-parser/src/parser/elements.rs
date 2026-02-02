@@ -71,6 +71,11 @@ impl<'a> Parser<'a> {
                     parts.push(n.clone());
                     self.advance();
                 }
+                Token::CurlyExpr(expr) => {
+                    // Preserve curly expressions with braces
+                    parts.push(format!("{{{}}}", expr));
+                    self.advance();
+                }
                 Token::Equals => {
                     parts.push("=".to_string());
                     self.advance();
