@@ -7,11 +7,13 @@
 mod macos {
     use crate::context::MpsContext;
     use crate::error::{MpsError, Result};
+    use objc2::AllocAnyThread;
     use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
-    use objc2::AllocAnyThread;
     use objc2_foundation::NSUInteger;
-    use objc2_metal::{MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLResourceOptions};
+    use objc2_metal::{
+        MTLBuffer, MTLCommandBuffer, MTLCommandQueue, MTLDevice, MTLResourceOptions,
+    };
     use objc2_metal_performance_shaders::{
         MPSDataType, MPSMatrix, MPSMatrixDecompositionLU, MPSMatrixDescriptor, MPSMatrixSolveLU,
     };
@@ -321,11 +323,7 @@ mod macos {
                 };
 
                 let mps_rhs = unsafe {
-                    MPSMatrix::initWithBuffer_descriptor(
-                        MPSMatrix::alloc(),
-                        &rhs_buffer,
-                        &rhs_desc,
-                    )
+                    MPSMatrix::initWithBuffer_descriptor(MPSMatrix::alloc(), &rhs_buffer, &rhs_desc)
                 };
 
                 let mps_solution = unsafe {
@@ -634,17 +632,20 @@ mod macos {
                 assert!(
                     (sol[0] - 0.25).abs() < 1e-3,
                     "Solution {}[0] = {} (expected 0.25)",
-                    i, sol[0]
+                    i,
+                    sol[0]
                 );
                 assert!(
                     (sol[1] - 0.5).abs() < 1e-3,
                     "Solution {}[1] = {} (expected 0.5)",
-                    i, sol[1]
+                    i,
+                    sol[1]
                 );
                 assert!(
                     (sol[2] - 0.25).abs() < 1e-3,
                     "Solution {}[2] = {} (expected 0.25)",
-                    i, sol[2]
+                    i,
+                    sol[2]
                 );
             }
         }
@@ -664,8 +665,8 @@ mod macos {
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    BatchedSolveResult, MpsBatchConfig, MpsBatchedLuSolver, MAX_BATCH_SIZE, MIN_BATCH_SIZE,
-    MIN_MATRIX_SIZE,
+    BatchedSolveResult, MAX_BATCH_SIZE, MIN_BATCH_SIZE, MIN_MATRIX_SIZE, MpsBatchConfig,
+    MpsBatchedLuSolver,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -762,6 +763,6 @@ mod stub {
 
 #[cfg(not(target_os = "macos"))]
 pub use stub::{
-    BatchedSolveResult, MpsBatchConfig, MpsBatchedLuSolver, MAX_BATCH_SIZE, MIN_BATCH_SIZE,
-    MIN_MATRIX_SIZE,
+    BatchedSolveResult, MAX_BATCH_SIZE, MIN_BATCH_SIZE, MIN_MATRIX_SIZE, MpsBatchConfig,
+    MpsBatchedLuSolver,
 };

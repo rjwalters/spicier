@@ -149,9 +149,9 @@ pub use gmres::{
     GmresConfig, GmresResult, RealGmresResult, solve_gmres, solve_gmres_preconditioned,
     solve_gmres_real, solve_gmres_real_preconditioned,
 };
-pub use linear::{CachedSparseLu, CachedSparseLuComplex};
 #[cfg(all(target_os = "macos", feature = "accelerate"))]
 pub use linear::{CachedDenseLu, CachedDenseLuComplex};
+pub use linear::{CachedSparseLu, CachedSparseLuComplex};
 pub use newton::{
     ConvergenceCriteria, GminSteppingParams, GminSteppingResult, NonlinearStamper, NrResult,
     ScaledNonlinearStamper, SourceSteppingParams, SourceSteppingResult, solve_newton_raphson,

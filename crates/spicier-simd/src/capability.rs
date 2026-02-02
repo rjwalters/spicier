@@ -107,7 +107,11 @@ mod tests {
         ));
 
         // On macOS with Accelerate feature, expect Accelerate capability
-        #[cfg(all(target_os = "macos", feature = "accelerate", not(any(target_arch = "x86", target_arch = "x86_64"))))]
+        #[cfg(all(
+            target_os = "macos",
+            feature = "accelerate",
+            not(any(target_arch = "x86", target_arch = "x86_64"))
+        ))]
         assert!(matches!(cap, SimdCapability::Accelerate));
 
         // On non-x86, non-macOS, or without Accelerate feature, expect Scalar

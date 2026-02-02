@@ -17,13 +17,7 @@ use crate::capability::SimdCapability;
 unsafe extern "C" {
     /// BLAS ddot: Compute dot product of two vectors.
     /// Returns: sum(x[i] * y[i]) for i in 0..n
-    fn cblas_ddot(
-        n: i32,
-        x: *const f64,
-        incx: i32,
-        y: *const f64,
-        incy: i32,
-    ) -> f64;
+    fn cblas_ddot(n: i32, x: *const f64, incx: i32, y: *const f64, incy: i32) -> f64;
 
     /// BLAS dgemv: Matrix-vector multiply y = alpha*A*x + beta*y
     /// order: CblasRowMajor (101) or CblasColMajor (102)
@@ -116,16 +110,16 @@ pub fn real_matvec_accelerate(matrix: &[f64], n: usize, x: &[f64], y: &mut [f64]
         cblas_dgemv(
             CBLAS_ROW_MAJOR,
             CBLAS_NO_TRANS,
-            n as i32,      // m: number of rows
-            n as i32,      // n: number of columns
-            1.0,           // alpha
+            n as i32, // m: number of rows
+            n as i32, // n: number of columns
+            1.0,      // alpha
             matrix.as_ptr(),
-            n as i32,      // lda: leading dimension
+            n as i32, // lda: leading dimension
             x.as_ptr(),
-            1,             // incx
-            0.0,           // beta (y = alpha*A*x + beta*y, so beta=0 means y = A*x)
+            1,   // incx
+            0.0, // beta (y = alpha*A*x + beta*y, so beta=0 means y = A*x)
             y.as_mut_ptr(),
-            1,             // incy
+            1, // incy
         );
     }
 }

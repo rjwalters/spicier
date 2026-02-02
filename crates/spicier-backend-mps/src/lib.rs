@@ -31,8 +31,8 @@ pub mod context;
 pub mod error;
 
 pub use batched_lu::{
-    BatchedSolveResult, MpsBatchConfig, MpsBatchedLuSolver, MAX_BATCH_SIZE, MIN_BATCH_SIZE,
-    MIN_MATRIX_SIZE,
+    BatchedSolveResult, MAX_BATCH_SIZE, MIN_BATCH_SIZE, MIN_MATRIX_SIZE, MpsBatchConfig,
+    MpsBatchedLuSolver,
 };
 pub use context::MpsContext;
 pub use error::{MpsError, Result};

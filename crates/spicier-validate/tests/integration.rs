@@ -208,7 +208,8 @@ fn test_tran_pulse_response() {
 
     // RC response to pulse input - use larger timestep to match ngspice better
     // Note: PULSE timing differences exist between simulators at sub-microsecond scales
-    let netlist = "RC Pulse\nV1 1 0 PULSE(0 5 100u 1u 1u 1m 2m)\nR1 1 2 1k\nC1 2 0 1u\n.tran 50u 4m\n.end\n";
+    let netlist =
+        "RC Pulse\nV1 1 0 PULSE(0 5 100u 1u 1u 1m 2m)\nR1 1 2 1k\nC1 2 0 1u\n.tran 50u 4m\n.end\n";
 
     let mut config = ComparisonConfig::default();
     // Relax tolerances for transient comparison - timing differences expected
@@ -262,7 +263,8 @@ fn test_dc_diode_iv() {
         return;
     }
 
-    let netlist = "Diode IV\nV1 1 0 DC 0.7\nR1 1 2 100\nD1 2 0 DMOD\n.model DMOD D IS=1e-14 N=1\n.op\n.end\n";
+    let netlist =
+        "Diode IV\nV1 1 0 DC 0.7\nR1 1 2 100\nD1 2 0 DMOD\n.model DMOD D IS=1e-14 N=1\n.op\n.end\n";
 
     let mut config = ComparisonConfig::default();
     config.variables = Some(vec!["v(1)".to_string(), "v(2)".to_string()]);
@@ -271,7 +273,10 @@ fn test_dc_diode_iv() {
     let report = compare_simulators(netlist, &config).unwrap();
 
     println!("DC Diode Report:\n{}", report.to_text());
-    assert!(report.passed, "Diode I-V DC operating point should match ngspice");
+    assert!(
+        report.passed,
+        "Diode I-V DC operating point should match ngspice"
+    );
 }
 
 #[test]
@@ -287,11 +292,18 @@ fn test_dc_nmos_common_source() {
     let netlist = "NMOS CS\nVdd 1 0 DC 5\nVg 2 0 DC 2\nRd 1 3 1k\nM1 3 2 0 0 NMOD W=10u L=1u\n.model NMOD NMOS VTO=0.7 KP=100u LAMBDA=0\n.op\n.end\n";
 
     let mut config = ComparisonConfig::default();
-    config.variables = Some(vec!["v(1)".to_string(), "v(2)".to_string(), "v(3)".to_string()]);
+    config.variables = Some(vec![
+        "v(1)".to_string(),
+        "v(2)".to_string(),
+        "v(3)".to_string(),
+    ]);
     config.dc.voltage_rel = 0.02; // 2% tolerance (actual error ~0.6%)
 
     let report = compare_simulators(netlist, &config).unwrap();
 
     println!("DC NMOS Report:\n{}", report.to_text());
-    assert!(report.passed, "NMOS common-source DC operating point should match ngspice");
+    assert!(
+        report.passed,
+        "NMOS common-source DC operating point should match ngspice"
+    );
 }

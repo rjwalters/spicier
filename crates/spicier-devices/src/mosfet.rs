@@ -475,8 +475,18 @@ mod tests {
         let expected_gm = beta * 1.3; // 650µS
 
         assert_eq!(region, MosfetRegion::Saturation);
-        assert!((ids - expected_ids).abs() < 1e-10, "ids={} expected={}", ids, expected_ids);
-        assert!((gm - expected_gm).abs() < 1e-10, "gm={} expected={}", gm, expected_gm);
+        assert!(
+            (ids - expected_ids).abs() < 1e-10,
+            "ids={} expected={}",
+            ids,
+            expected_ids
+        );
+        assert!(
+            (gm - expected_gm).abs() < 1e-10,
+            "gm={} expected={}",
+            gm,
+            expected_gm
+        );
 
         // Test MNA stamping
         let mut mna = MnaSystem::new(3, 0);
@@ -527,7 +537,11 @@ mod tests {
         pmos.stamp_linearized_at(&mut mna, 0.0, 0.0); // MOSFET at (0, 0) = cutoff
 
         let matrix = mna.to_dense_matrix();
-        let solution_1 = matrix.clone().lu().solve(mna.rhs()).expect("LU solve failed");
+        let solution_1 = matrix
+            .clone()
+            .lu()
+            .solve(mna.rhs())
+            .expect("LU solve failed");
 
         // After iteration 0: V(1)≈0, V(2)=3, V(3)=5
         assert!((solution_1[1] - 3.0).abs() < 1e-9, "V(2) should be 3V");
@@ -544,11 +558,18 @@ mod tests {
         pmos.stamp_linearized_at(&mut mna, vgs_1, vds_1);
 
         let matrix = mna.to_dense_matrix();
-        let solution_2 = matrix.clone().lu().solve(mna.rhs()).expect("LU solve failed");
+        let solution_2 = matrix
+            .clone()
+            .lu()
+            .solve(mna.rhs())
+            .expect("LU solve failed");
 
         // Expected: V(1) ≈ 0.42V for PMOS in saturation
-        assert!(solution_2[0] > 0.3 && solution_2[0] < 0.6,
-                "V(1) = {} (expected ~0.42V)", solution_2[0]);
+        assert!(
+            solution_2[0] > 0.3 && solution_2[0] < 0.6,
+            "V(1) = {} (expected ~0.42V)",
+            solution_2[0]
+        );
     }
 
     #[test]

@@ -1028,22 +1028,46 @@ mod tests {
         let b1 = dvector![5.0, 4.0];
         let x1 = cached.solve(&b1).unwrap();
         // A = [[4,1],[1,3]], b = [5,4] → x = [1,1]
-        assert!((x1[0] - 1.0).abs() < 1e-10, "x1[0] = {} (expected 1.0)", x1[0]);
-        assert!((x1[1] - 1.0).abs() < 1e-10, "x1[1] = {} (expected 1.0)", x1[1]);
+        assert!(
+            (x1[0] - 1.0).abs() < 1e-10,
+            "x1[0] = {} (expected 1.0)",
+            x1[0]
+        );
+        assert!(
+            (x1[1] - 1.0).abs() < 1e-10,
+            "x1[1] = {} (expected 1.0)",
+            x1[1]
+        );
 
         // Second solve with different RHS (reuses LU factorization)
         let b2 = dvector![10.0, 8.0];
         let x2 = cached.solve(&b2).unwrap();
         // Same A, b = [10,8] → x = [2,2]
-        assert!((x2[0] - 2.0).abs() < 1e-10, "x2[0] = {} (expected 2.0)", x2[0]);
-        assert!((x2[1] - 2.0).abs() < 1e-10, "x2[1] = {} (expected 2.0)", x2[1]);
+        assert!(
+            (x2[0] - 2.0).abs() < 1e-10,
+            "x2[0] = {} (expected 2.0)",
+            x2[0]
+        );
+        assert!(
+            (x2[1] - 2.0).abs() < 1e-10,
+            "x2[1] = {} (expected 2.0)",
+            x2[1]
+        );
 
         // Third solve
         let b3 = dvector![15.0, 12.0];
         let x3 = cached.solve(&b3).unwrap();
         // Same A, b = [15,12] → x = [3,3]
-        assert!((x3[0] - 3.0).abs() < 1e-10, "x3[0] = {} (expected 3.0)", x3[0]);
-        assert!((x3[1] - 3.0).abs() < 1e-10, "x3[1] = {} (expected 3.0)", x3[1]);
+        assert!(
+            (x3[0] - 3.0).abs() < 1e-10,
+            "x3[0] = {} (expected 3.0)",
+            x3[0]
+        );
+        assert!(
+            (x3[1] - 3.0).abs() < 1e-10,
+            "x3[1] = {} (expected 3.0)",
+            x3[1]
+        );
     }
 
     #[cfg(all(target_os = "macos", feature = "accelerate"))]

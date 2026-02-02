@@ -179,7 +179,12 @@ pub fn validate_against_golden(circuit: &GoldenCircuit) -> Result<ComparisonRepo
                 voltage_rel: 1e-3,
                 time_shift: 0.0,
             };
-            Ok(compare_transient(&ng, sp, &tol, Some(std::slice::from_ref(node))))
+            Ok(compare_transient(
+                &ng,
+                sp,
+                &tol,
+                Some(std::slice::from_ref(node)),
+            ))
         }
         _ => Err(Error::AnalysisTypeMismatch {
             expected: "golden analysis type".to_string(),

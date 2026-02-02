@@ -1986,9 +1986,18 @@ R3 3 0 3k
     let v2 = solution.voltage(NodeId::new(2));
     let v3 = solution.voltage(NodeId::new(3));
 
-    assert!((v1 - 12.0).abs() < DC_VOLTAGE_TOL, "V(1) = {v1} (expected 12.0)");
-    assert!((v2 - 10.0).abs() < DC_VOLTAGE_TOL, "V(2) = {v2} (expected 10.0)");
-    assert!((v3 - 6.0).abs() < DC_VOLTAGE_TOL, "V(3) = {v3} (expected 6.0)");
+    assert!(
+        (v1 - 12.0).abs() < DC_VOLTAGE_TOL,
+        "V(1) = {v1} (expected 12.0)"
+    );
+    assert!(
+        (v2 - 10.0).abs() < DC_VOLTAGE_TOL,
+        "V(2) = {v2} (expected 10.0)"
+    );
+    assert!(
+        (v3 - 6.0).abs() < DC_VOLTAGE_TOL,
+        "V(3) = {v3} (expected 6.0)"
+    );
 }
 
 /// Test: Pi network - common filter topology
@@ -2016,8 +2025,14 @@ R3 2 0 1k
     let v1 = solution.voltage(NodeId::new(1));
     let v2 = solution.voltage(NodeId::new(2));
 
-    assert!((v1 - 10.0).abs() < DC_VOLTAGE_TOL, "V(1) = {v1} (expected 10.0)");
-    assert!((v2 - 5.0).abs() < DC_VOLTAGE_TOL, "V(2) = {v2} (expected 5.0)");
+    assert!(
+        (v1 - 10.0).abs() < DC_VOLTAGE_TOL,
+        "V(1) = {v1} (expected 10.0)"
+    );
+    assert!(
+        (v2 - 5.0).abs() < DC_VOLTAGE_TOL,
+        "V(2) = {v2} (expected 5.0)"
+    );
 }
 
 /// Test: Dual RC ladder AC response - cascaded lowpass
@@ -2143,7 +2158,10 @@ fn test_ac_rlc_bandpass_q() {
 
     // At resonance, inductor and capacitor impedances cancel
     // Output should be near 0dB (voltage across C equals input due to resonance)
-    println!("RLC bandpass: f0 = {:.1} Hz, mag = {:.2} dB", f0, mag_at_res);
+    println!(
+        "RLC bandpass: f0 = {:.1} Hz, mag = {:.2} dB",
+        f0, mag_at_res
+    );
 
     // The transfer function at resonance depends on circuit topology
     // For series RLC with output across C, gain at resonance = Q
@@ -2221,8 +2239,14 @@ M1 1 2 3 3 PMOD W=10u L=1u
     // Ids = 0.5 * beta * Vov^2 = 0.5 * 500e-6 * 1.69 = 0.4225mA
     // V(drain) = Ids * Rd = 0.4225mA * 1k = 0.4225V
 
-    assert!((v3 - 5.0).abs() < DC_VOLTAGE_TOL, "V(3) = {v3} (expected 5.0)");
-    assert!((v2 - 3.0).abs() < DC_VOLTAGE_TOL, "V(2) = {v2} (expected 3.0)");
+    assert!(
+        (v3 - 5.0).abs() < DC_VOLTAGE_TOL,
+        "V(3) = {v3} (expected 5.0)"
+    );
+    assert!(
+        (v2 - 3.0).abs() < DC_VOLTAGE_TOL,
+        "V(2) = {v2} (expected 3.0)"
+    );
     // Drain voltage should be close to calculated value
     assert!(
         v1 > 0.3 && v1 < 0.6,
@@ -2286,7 +2310,10 @@ D2 3 0 DMOD
     // V(1) = 5V (source)
     // V(2) should be around 1.2-1.4V (two diode drops above ground)
     // V(3) should be around 0.6-0.7V (one diode drop)
-    assert!((v1 - 5.0).abs() < DC_VOLTAGE_TOL, "V(1) = {v1} (expected 5.0)");
+    assert!(
+        (v1 - 5.0).abs() < DC_VOLTAGE_TOL,
+        "V(1) = {v1} (expected 5.0)"
+    );
     assert!(
         v2 > 1.1 && v2 < 1.5,
         "V(2) = {v2} (expected ~1.3V, two diode drops)"
@@ -2350,8 +2377,14 @@ M1 1 2 0 0 NMOD W=10u L=1u
     // Vgs = 2V, Vto = 0.7V, Vov = 1.3V
     // Vds = 0.5V < Vov → linear region
     // Ids = beta * ((Vgs-Vto)*Vds - Vds^2/2) = 1e-3 * (1.3*0.5 - 0.125) = 0.525mA
-    assert!((vgs - 2.0).abs() < DC_VOLTAGE_TOL, "Vgs = {vgs} (expected 2.0)");
-    assert!((vds - 0.5).abs() < DC_VOLTAGE_TOL, "Vds = {vds} (expected 0.5)");
+    assert!(
+        (vgs - 2.0).abs() < DC_VOLTAGE_TOL,
+        "Vgs = {vgs} (expected 2.0)"
+    );
+    assert!(
+        (vds - 0.5).abs() < DC_VOLTAGE_TOL,
+        "Vds = {vds} (expected 0.5)"
+    );
 }
 
 // ============================================================================
@@ -2564,12 +2597,12 @@ fn test_ac_nmos_common_source_amplifier() {
 
     struct CsAmpStamper {
         // Operating point parameters (pre-computed)
-        gm: f64,      // transconductance at operating point
-        gds: f64,     // output conductance
-        rd: f64,      // load resistance
-        rs: f64,      // source resistance (input coupling)
-        cin: f64,     // input coupling capacitor
-        cout: f64,    // output coupling capacitor
+        gm: f64,   // transconductance at operating point
+        gds: f64,  // output conductance
+        rd: f64,   // load resistance
+        rs: f64,   // source resistance (input coupling)
+        cin: f64,  // input coupling capacitor
+        cout: f64, // output coupling capacitor
     }
 
     impl AcStamper for CsAmpStamper {
@@ -2621,9 +2654,9 @@ fn test_ac_nmos_common_source_amplifier() {
     // For simplicity, use approximate values
     let gm = 1.3e-3; // 1.3 mS
     let gds = 20e-6; // 20 uS (lambda effect)
-    let rd = 2e3;    // 2k load
-    let rs = 100.0;  // 100 ohm source
-    let cin = 1e-6;  // 1uF input coupling
+    let rd = 2e3; // 2k load
+    let rs = 100.0; // 100 ohm source
+    let cin = 1e-6; // 1uF input coupling
     let cout = 1e-6; // 1uF output coupling
 
     let stamper = CsAmpStamper {
@@ -2642,8 +2675,8 @@ fn test_ac_nmos_common_source_amplifier() {
     let params = AcParams {
         sweep_type: AcSweepType::Decade,
         num_points: 10,
-        fstart: 100.0,    // 100 Hz
-        fstop: 1e6,       // 1 MHz
+        fstart: 100.0, // 100 Hz
+        fstop: 1e6,    // 1 MHz
     };
 
     let result = solve_ac(&stamper, &params).expect("AC solve failed");
@@ -2776,7 +2809,8 @@ C1 2 0 10u
     };
 
     // Initial condition: all nodes at 0V
-    let _dc_solution = DVector::from_vec(vec![0.0; netlist.num_nodes() + netlist.num_current_vars()]);
+    let _dc_solution =
+        DVector::from_vec(vec![0.0; netlist.num_nodes() + netlist.num_current_vars()]);
 
     // For this test, we'll use a simpler approach - just verify the circuit parses
     // and we can set up the stampers correctly
@@ -2784,7 +2818,10 @@ C1 2 0 10u
 
     // Verify circuit structure
     assert_eq!(netlist.num_nodes(), 2, "Should have 2 nodes");
-    assert!(netlist.num_current_vars() >= 1, "Should have voltage source current");
+    assert!(
+        netlist.num_current_vars() >= 1,
+        "Should have voltage source current"
+    );
 
     // Count devices
     let mut has_diode = false;
@@ -3000,7 +3037,7 @@ Rload out 0 5k
     // Vth = -0.7V, so |Vgs| > |Vth| -> PMOS is on
     // Check output voltage is reasonable (between 0 and Vdd)
     let vout = nr_result.solution[2]; // out node
-    let vdd = nr_result.solution[0];  // vdd node
+    let vdd = nr_result.solution[0]; // vdd node
 
     assert!(
         vout > 0.0 && vout < vdd,
@@ -3123,7 +3160,11 @@ R1 1 0 1k
 
     // Verify circuit parsed correctly
     assert_eq!(netlist.num_nodes(), 1, "Should have 1 node");
-    assert_eq!(netlist.num_current_vars(), 1, "Should have 1 voltage source");
+    assert_eq!(
+        netlist.num_current_vars(),
+        1,
+        "Should have 1 voltage source"
+    );
 
     // Verify we have 2 devices (V1 and R1)
     let device_count = netlist.devices().len();
@@ -3152,7 +3193,10 @@ R1 1 0 1k
 
     // Verify the circuit has a voltage source (damped sine)
     // (Full transient simulation would require time-dependent source stamping)
-    assert!(netlist.num_current_vars() >= 1, "Should have voltage source current variable");
+    assert!(
+        netlist.num_current_vars() >= 1,
+        "Should have voltage source current variable"
+    );
 }
 
 /// Test: NMOS source follower (common drain) configuration
@@ -3209,7 +3253,7 @@ Rs out 0 1k
     // Vout ≈ Vin - Vth - Vov (source follower gain < 1)
     // Vin = 3V, Vth = 0.7V, so Vout should be around 2V-ish
     let vout = nr_result.solution[2]; // out node
-    let vin = nr_result.solution[1];  // in node
+    let vin = nr_result.solution[1]; // in node
 
     assert!(
         vout > 0.5 && vout < vin,
@@ -3275,7 +3319,7 @@ D1 out 0 DMOD
     assert!(nr_result.converged, "Clipper should converge");
 
     let vout = nr_result.solution[1]; // out node
-    let vin = nr_result.solution[0];  // in node
+    let vin = nr_result.solution[0]; // in node
 
     // Diode clamps output to ~0.65-0.75V
     assert!(
@@ -3406,8 +3450,8 @@ Rload out 0 10k
 fn test_ac_twin_t_notch_filter() {
     // Twin-T notch filter: R=10k, C=10nF -> f_notch ≈ 1.59 kHz
     struct TwinTStamper {
-        r: f64,  // Resistance (same for all R)
-        c: f64,  // Capacitance (same for all C)
+        r: f64, // Resistance (same for all R)
+        c: f64, // Capacitance (same for all C)
     }
 
     impl AcStamper for TwinTStamper {
@@ -3447,7 +3491,7 @@ fn test_ac_twin_t_notch_filter() {
         }
     }
 
-    let r = 10e3;  // 10k
+    let r = 10e3; // 10k
     let c = 10e-9; // 10nF
     let f_notch = 1.0 / (2.0 * PI * r * c); // ≈ 1.59 kHz
 
@@ -3585,9 +3629,11 @@ R1 2 0 10k
         .collect();
 
     if !mid_pulse_points.is_empty() {
-        let avg_output: f64 =
-            mid_pulse_points.iter().map(|p| p.solution[1].abs()).sum::<f64>()
-                / mid_pulse_points.len() as f64;
+        let avg_output: f64 = mid_pulse_points
+            .iter()
+            .map(|p| p.solution[1].abs())
+            .sum::<f64>()
+            / mid_pulse_points.len() as f64;
 
         // Output should be decaying toward zero mid-pulse
         assert!(
@@ -3670,7 +3716,7 @@ fn test_ac_second_order_bandpass() {
 
             let g = 1.0 / self.r;
             let yl = Complex::new(0.0, -1.0 / (omega * self.l)); // 1/(jwL)
-            let yc = Complex::new(0.0, omega * self.c);           // jwC
+            let yc = Complex::new(0.0, omega * self.c); // jwC
 
             // C from input (0) to node 1
             mna.stamp_admittance(Some(0), Some(1), yc);

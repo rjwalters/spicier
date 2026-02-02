@@ -89,14 +89,7 @@ pub fn complex_dot_accelerate(a: &[C64], b: &[C64]) -> C64 {
     }
     let mut result = C64::new(0.0, 0.0);
     unsafe {
-        cblas_zdotu_sub(
-            a.len() as i32,
-            a.as_ptr(),
-            1,
-            b.as_ptr(),
-            1,
-            &mut result,
-        );
+        cblas_zdotu_sub(a.len() as i32, a.as_ptr(), 1, b.as_ptr(), 1, &mut result);
     }
     result
 }

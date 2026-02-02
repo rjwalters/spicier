@@ -116,10 +116,7 @@ impl ConvergenceTracker {
 
     /// Number of converged points.
     pub fn converged_count(&self) -> usize {
-        self.status
-            .iter()
-            .filter(|s| s.is_converged())
-            .count()
+        self.status.iter().filter(|s| s.is_converged()).count()
     }
 
     /// Number of failed points.

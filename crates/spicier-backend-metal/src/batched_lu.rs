@@ -3,6 +3,7 @@
 //! Each matrix in the batch is processed by a separate workgroup, enabling
 //! massive parallelism for Monte Carlo, corner analysis, and parameter sweeps.
 
+use crate::batch_layout::{BatchLayout, pack_matrices_f32, pack_rhs_f32, unpack_solutions_f64};
 use crate::context::WgpuContext;
 use crate::error::{Result, WgpuError};
 use bytemuck::{Pod, Zeroable};
@@ -26,6 +27,8 @@ pub const MIN_MATRIX_SIZE: usize = 100;
 struct Uniforms {
     n: u32,
     batch_size: u32,
+    row_stride: u32,
+    matrix_stride: u32,
 }
 
 /// Result of a batched LU solve operation.
@@ -261,25 +264,19 @@ impl MetalBatchedLuSolver {
         let device = &self.ctx.device;
         let queue = &self.ctx.queue;
 
-        // Convert f64 -> f32 for GPU (most GPUs don't support f64)
-        // The shader expects row-major, but input is column-major, so we need to transpose
-        let mut matrices_f32 = Vec::with_capacity(expected_matrix_len);
-        for batch_idx in 0..batch_size {
-            let mat_offset = batch_idx * n * n;
-            // Transpose from column-major to row-major
-            for row in 0..n {
-                for col in 0..n {
-                    matrices_f32.push(matrices[mat_offset + col * n + row] as f32);
-                }
-            }
-        }
+        // Create batch layout for aligned memory access
+        let layout = BatchLayout::new(n, batch_size);
 
-        let rhs_f32: Vec<f32> = rhs.iter().map(|&v| v as f32).collect();
+        // Convert f64 -> f32 with col-major -> row-major transpose and alignment padding
+        let matrices_f32 = pack_matrices_f32(matrices, n, batch_size, &layout);
+        let rhs_f32 = pack_rhs_f32(rhs);
 
-        // Create uniform buffer
+        // Create uniform buffer with stride information for shader
         let uniforms = Uniforms {
             n: n as u32,
             batch_size: batch_size as u32,
+            row_stride: layout.padded_row_stride() as u32,
+            matrix_stride: layout.padded_matrix_size() as u32,
         };
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Batched LU Uniforms"),
@@ -288,6 +285,7 @@ impl MetalBatchedLuSolver {
         });
 
         // Create matrix buffer (read-write, modified during factorization)
+        // Uses aligned layout for coalesced GPU memory access
         let matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Batched LU Matrices"),
             contents: bytemuck::cast_slice(&matrices_f32),
@@ -397,7 +395,7 @@ impl MetalBatchedLuSolver {
 
             let data = buffer_slice.get_mapped_range();
             let solutions_f32: &[f32] = bytemuck::cast_slice(&data);
-            let solutions: Vec<f64> = solutions_f32.iter().map(|&v| v as f64).collect();
+            let solutions = unpack_solutions_f64(solutions_f32);
             drop(data);
             solution_staging.unmap();
             solutions
@@ -569,7 +567,10 @@ mod tests {
 
         let result = solver.solve_batch(&matrices, &rhs, n, batch_size).unwrap();
 
-        assert!(result.is_singular(1), "Matrix 1 should be detected as singular");
+        assert!(
+            result.is_singular(1),
+            "Matrix 1 should be detected as singular"
+        );
         assert!(!result.is_singular(0), "Matrix 0 should not be singular");
     }
 
@@ -578,9 +579,9 @@ mod tests {
         let config = GpuBatchConfig::default();
 
         // Default thresholds: min_batch=2000, min_matrix=100
-        assert!(!config.should_use_gpu(50, 100));    // Matrix too small
-        assert!(!config.should_use_gpu(100, 100));   // Batch too small
-        assert!(config.should_use_gpu(100, 2000));   // Both OK
-        assert!(!config.should_use_gpu(200, 2000));  // Matrix too large
+        assert!(!config.should_use_gpu(50, 100)); // Matrix too small
+        assert!(!config.should_use_gpu(100, 100)); // Batch too small
+        assert!(config.should_use_gpu(100, 2000)); // Both OK
+        assert!(!config.should_use_gpu(200, 2000)); // Matrix too large
     }
 }

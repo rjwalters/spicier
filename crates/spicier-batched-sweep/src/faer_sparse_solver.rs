@@ -116,10 +116,16 @@ impl BatchedLuSolver for FaerSparseCachedBatchedSolver {
                 let mat_data = &matrices[0..n * n];
                 let triplets = dense_to_sparse_triplets(mat_data, n);
                 let sparse_mat = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &triplets)
-                    .map_err(|e| BatchedSweepError::Backend(format!("Failed to build sparse matrix: {:?}", e)))?;
+                    .map_err(|e| {
+                        BatchedSweepError::Backend(format!(
+                            "Failed to build sparse matrix: {:?}",
+                            e
+                        ))
+                    })?;
 
-                let new_symbolic = SymbolicLu::try_new(sparse_mat.symbolic())
-                    .map_err(|e| BatchedSweepError::Backend(format!("Symbolic factorization failed: {:?}", e)))?;
+                let new_symbolic = SymbolicLu::try_new(sparse_mat.symbolic()).map_err(|e| {
+                    BatchedSweepError::Backend(format!("Symbolic factorization failed: {:?}", e))
+                })?;
 
                 let symbolic = Arc::new(new_symbolic);
 
@@ -195,12 +201,11 @@ fn solve_with_symbolic(
 ) -> std::result::Result<Vec<f64>, ()> {
     // Convert dense to sparse
     let triplets = dense_to_sparse_triplets(mat_data, n);
-    let sparse_mat = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &triplets)
-        .map_err(|_| ())?;
+    let sparse_mat =
+        SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &triplets).map_err(|_| ())?;
 
     // Numeric factorization using cached symbolic
-    let lu = Lu::try_new_with_symbolic(symbolic.clone(), sparse_mat.as_ref())
-        .map_err(|_| ())?;
+    let lu = Lu::try_new_with_symbolic(symbolic.clone(), sparse_mat.as_ref()).map_err(|_| ())?;
 
     // Solve
     let b = Col::<f64>::from_fn(n, |i| rhs_data[i]);
@@ -272,19 +277,28 @@ impl FaerTripletBatchedSolver {
             .collect();
 
         let first_sparse = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &first_triplets)
-            .map_err(|e| BatchedSweepError::Backend(format!("Failed to build sparse matrix: {:?}", e)))?;
+            .map_err(|e| {
+                BatchedSweepError::Backend(format!("Failed to build sparse matrix: {:?}", e))
+            })?;
 
-        let symbolic = SymbolicLu::try_new(first_sparse.symbolic())
-            .map_err(|e| BatchedSweepError::Backend(format!("Symbolic factorization failed: {:?}", e)))?;
+        let symbolic = SymbolicLu::try_new(first_sparse.symbolic()).map_err(|e| {
+            BatchedSweepError::Backend(format!("Symbolic factorization failed: {:?}", e))
+        })?;
 
         let mut solutions = Vec::with_capacity(batch_size * n);
         let mut singular_indices = Vec::new();
 
-        for (i, (triplets, rhs)) in triplets_per_system.iter().zip(rhs_per_system.iter()).enumerate() {
+        for (i, (triplets, rhs)) in triplets_per_system
+            .iter()
+            .zip(rhs_per_system.iter())
+            .enumerate()
+        {
             if rhs.len() != n {
                 return Err(BatchedSweepError::InvalidDimension(format!(
                     "RHS {} has size {}, expected {}",
-                    i, rhs.len(), n
+                    i,
+                    rhs.len(),
+                    n
                 )));
             }
 
@@ -293,14 +307,15 @@ impl FaerTripletBatchedSolver {
                 .map(|&(r, c, v)| Triplet::new(r, c, v))
                 .collect();
 
-            let sparse_mat = match SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &faer_triplets) {
-                Ok(m) => m,
-                Err(_) => {
-                    solutions.extend(std::iter::repeat(0.0).take(n));
-                    singular_indices.push(i);
-                    continue;
-                }
-            };
+            let sparse_mat =
+                match SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &faer_triplets) {
+                    Ok(m) => m,
+                    Err(_) => {
+                        solutions.extend(std::iter::repeat(0.0).take(n));
+                        singular_indices.push(i);
+                        continue;
+                    }
+                };
 
             let lu = match Lu::try_new_with_symbolic(symbolic.clone(), sparse_mat.as_ref()) {
                 Ok(lu) => lu,
@@ -416,10 +431,7 @@ mod tests {
             vec![(0, 0, 4.0), (0, 1, 2.0), (1, 0, 2.0), (1, 1, 6.0)],
         ];
 
-        let rhs_per_system = vec![
-            vec![5.0, 10.0],
-            vec![10.0, 20.0],
-        ];
+        let rhs_per_system = vec![vec![5.0, 10.0], vec![10.0, 20.0]];
 
         let result = solver
             .solve_batch_triplets(&triplets_per_system, &rhs_per_system, n)
@@ -467,10 +479,17 @@ mod tests {
             }
         }
 
-        let sparse_result = sparse_solver.solve_batch(&matrices, &rhs, n, batch_size).unwrap();
-        let dense_result = dense_solver.solve_batch(&matrices, &rhs, n, batch_size).unwrap();
+        let sparse_result = sparse_solver
+            .solve_batch(&matrices, &rhs, n, batch_size)
+            .unwrap();
+        let dense_result = dense_solver
+            .solve_batch(&matrices, &rhs, n, batch_size)
+            .unwrap();
 
-        assert_eq!(sparse_result.singular_indices, dense_result.singular_indices);
+        assert_eq!(
+            sparse_result.singular_indices,
+            dense_result.singular_indices
+        );
 
         for i in 0..batch_size {
             let sparse_sol = sparse_result.solution(i).unwrap();
@@ -479,7 +498,10 @@ mod tests {
                 assert!(
                     (sparse_sol[j] - dense_sol[j]).abs() < 1e-10,
                     "Batch {}, element {}: sparse={}, dense={}",
-                    i, j, sparse_sol[j], dense_sol[j]
+                    i,
+                    j,
+                    sparse_sol[j],
+                    dense_sol[j]
                 );
             }
         }
@@ -496,9 +518,9 @@ mod tests {
 
         // First batch: 3x3 diagonally dominant matrix
         let matrices1 = vec![
-            5.0, 1.0, 0.0,  // col 0
-            1.0, 5.0, 1.0,  // col 1
-            0.0, 1.0, 5.0,  // col 2
+            5.0, 1.0, 0.0, // col 0
+            1.0, 5.0, 1.0, // col 1
+            0.0, 1.0, 5.0, // col 2
         ];
         let rhs1 = vec![6.0, 7.0, 6.0];
 
@@ -510,9 +532,9 @@ mod tests {
 
         // Second batch: same sparsity pattern, different values
         let matrices2 = vec![
-            10.0, 2.0, 0.0,  // col 0
-            2.0, 10.0, 2.0,  // col 1
-            0.0, 2.0, 10.0,  // col 2
+            10.0, 2.0, 0.0, // col 0
+            2.0, 10.0, 2.0, // col 1
+            0.0, 2.0, 10.0, // col 2
         ];
         let rhs2 = vec![12.0, 14.0, 12.0];
 

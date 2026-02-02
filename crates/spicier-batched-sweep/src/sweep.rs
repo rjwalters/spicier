@@ -3,12 +3,12 @@
 use crate::error::Result;
 use crate::solver::{BackendSelector, BackendType, BatchedLuSolver};
 use nalgebra::DVector;
+#[cfg(test)]
+use spicier_solver::SweepStamper;
 use spicier_solver::{
     ConvergenceCriteria, DispatchConfig, ParameterVariation, SweepPoint, SweepPointGenerator,
     SweepStamperFactory, SweepStatistics,
 };
-#[cfg(test)]
-use spicier_solver::SweepStamper;
 #[cfg(test)]
 use std::sync::Arc;
 
@@ -362,7 +362,11 @@ mod tests {
         // Check statistics
         let stats = result.statistics(1);
         // V(1) should be around 5V for voltage divider with R1 ≈ R2
-        assert!(stats.mean > 3.0 && stats.mean < 7.0, "Mean was {}", stats.mean);
+        assert!(
+            stats.mean > 3.0 && stats.mean < 7.0,
+            "Mean was {}",
+            stats.mean
+        );
     }
 
     #[test]

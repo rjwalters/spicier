@@ -122,7 +122,12 @@ pub fn derivative_function(name: &str, args: &[Expr], node: &str, ctx: &EvalCont
 }
 
 /// Compute derivative of a function with respect to a branch current.
-pub fn derivative_function_current(name: &str, args: &[Expr], source: &str, ctx: &EvalContext) -> f64 {
+pub fn derivative_function_current(
+    name: &str,
+    args: &[Expr],
+    source: &str,
+    ctx: &EvalContext,
+) -> f64 {
     let name_upper = name.to_uppercase();
 
     // Same logic as voltage derivative, but using current derivatives

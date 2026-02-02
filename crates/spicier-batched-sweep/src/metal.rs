@@ -54,9 +54,10 @@ impl BatchedLuSolver for MetalBatchedSolver {
         n: usize,
         batch_size: usize,
     ) -> Result<BatchedSolveResult> {
-        let metal_result = self.solver.solve_batch(matrices, rhs, n, batch_size).map_err(|e| {
-            BatchedSweepError::Backend(format!("Metal solve failed: {}", e))
-        })?;
+        let metal_result = self
+            .solver
+            .solve_batch(matrices, rhs, n, batch_size)
+            .map_err(|e| BatchedSweepError::Backend(format!("Metal solve failed: {}", e)))?;
 
         Ok(BatchedSolveResult {
             solutions: metal_result.solutions,
@@ -144,8 +145,8 @@ mod tests {
         };
 
         // Uses GpuBatchConfig defaults from batched-sweep: min_batch=16, min_matrix=32
-        assert!(!solver.should_use_gpu(16, 100));  // Matrix too small (16 < 32)
-        assert!(!solver.should_use_gpu(64, 8));    // Batch too small (8 < 16)
-        assert!(solver.should_use_gpu(64, 32));    // Both OK (64 >= 32, 32 >= 16)
+        assert!(!solver.should_use_gpu(16, 100)); // Matrix too small (16 < 32)
+        assert!(!solver.should_use_gpu(64, 8)); // Batch too small (8 < 16)
+        assert!(solver.should_use_gpu(64, 32)); // Both OK (64 >= 32, 32 >= 16)
     }
 }

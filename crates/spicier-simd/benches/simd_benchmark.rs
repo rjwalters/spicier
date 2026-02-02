@@ -1,13 +1,10 @@
 //! Benchmark comparing Accelerate vs scalar SIMD operations.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use num_complex::Complex64 as C64;
 use spicier_simd::{
-    SimdCapability,
-    complex_dot_product, complex_dot_scalar,
-    complex_conjugate_dot_product, conjugate_dot_scalar,
-    real_dot_product, real_dot_scalar,
-    real_matvec, real_matvec_scalar,
+    SimdCapability, complex_conjugate_dot_product, complex_dot_product, complex_dot_scalar,
+    conjugate_dot_scalar, real_dot_product, real_dot_scalar, real_matvec, real_matvec_scalar,
 };
 
 fn bench_real_dot(c: &mut Criterion) {
@@ -18,13 +15,9 @@ fn bench_real_dot(c: &mut Criterion) {
         let a: Vec<f64> = (0..size).map(|i| i as f64 * 0.1).collect();
         let b: Vec<f64> = (0..size).map(|i| (size - i) as f64 * 0.2).collect();
 
-        group.bench_with_input(
-            BenchmarkId::new("scalar", size),
-            &size,
-            |bencher, _| {
-                bencher.iter(|| real_dot_scalar(&a, &b));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("scalar", size), &size, |bencher, _| {
+            bencher.iter(|| real_dot_scalar(&a, &b));
+        });
 
         group.bench_with_input(
             BenchmarkId::new(&format!("{:?}", cap), size),
@@ -49,13 +42,9 @@ fn bench_complex_dot(c: &mut Criterion) {
             .map(|i| C64::new((size - i) as f64 * 0.3, i as f64 * 0.05))
             .collect();
 
-        group.bench_with_input(
-            BenchmarkId::new("scalar", size),
-            &size,
-            |bencher, _| {
-                bencher.iter(|| complex_dot_scalar(&a, &b));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("scalar", size), &size, |bencher, _| {
+            bencher.iter(|| complex_dot_scalar(&a, &b));
+        });
 
         group.bench_with_input(
             BenchmarkId::new(&format!("{:?}", cap), size),
@@ -80,13 +69,9 @@ fn bench_conjugate_dot(c: &mut Criterion) {
             .map(|i| C64::new((size - i) as f64 * 0.3, i as f64 * 0.05))
             .collect();
 
-        group.bench_with_input(
-            BenchmarkId::new("scalar", size),
-            &size,
-            |bencher, _| {
-                bencher.iter(|| conjugate_dot_scalar(&a, &b));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("scalar", size), &size, |bencher, _| {
+            bencher.iter(|| conjugate_dot_scalar(&a, &b));
+        });
 
         group.bench_with_input(
             BenchmarkId::new(&format!("{:?}", cap), size),
@@ -104,22 +89,16 @@ fn bench_real_matvec(c: &mut Criterion) {
     let cap = SimdCapability::detect();
 
     for n in [50, 100, 200, 500] {
-        let matrix: Vec<f64> = (0..n * n)
-            .map(|i| (i as f64 * 0.01).sin())
-            .collect();
+        let matrix: Vec<f64> = (0..n * n).map(|i| (i as f64 * 0.01).sin()).collect();
         let x: Vec<f64> = (0..n).map(|i| (i as f64 * 0.1).cos()).collect();
         let mut y_scalar = vec![0.0; n];
         let mut y_simd = vec![0.0; n];
 
-        group.bench_with_input(
-            BenchmarkId::new("scalar", n),
-            &n,
-            |bencher, _| {
-                bencher.iter(|| {
-                    real_matvec_scalar(&matrix, n, &x, &mut y_scalar);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("scalar", n), &n, |bencher, _| {
+            bencher.iter(|| {
+                real_matvec_scalar(&matrix, n, &x, &mut y_scalar);
+            });
+        });
 
         group.bench_with_input(
             BenchmarkId::new(&format!("{:?}", cap), n),

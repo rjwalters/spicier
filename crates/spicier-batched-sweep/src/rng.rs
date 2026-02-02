@@ -51,8 +51,7 @@ pub fn splitmix64(mut x: u64) -> u64 {
 pub fn combine_indices(seed: u64, sweep_idx: u32, param_idx: u32) -> u64 {
     // Mix the indices into different bit ranges to avoid collisions
     // Use wrapping_mul to avoid overflow panics in debug mode
-    seed
-        ^ (sweep_idx as u64).wrapping_mul(0x517cc1b727220a95)
+    seed ^ (sweep_idx as u64).wrapping_mul(0x517cc1b727220a95)
         ^ (param_idx as u64).wrapping_mul(0x5851f42d4c957f2d)
 }
 
@@ -152,7 +151,13 @@ pub fn gaussian_scaled(seed: u64, sweep_idx: u32, param_idx: u32, mean: f64, sig
 
 /// Generate a Gaussian random f32 with specified mean and sigma.
 #[inline]
-pub fn gaussian_scaled_f32(seed: u64, sweep_idx: u32, param_idx: u32, mean: f32, sigma: f32) -> f32 {
+pub fn gaussian_scaled_f32(
+    seed: u64,
+    sweep_idx: u32,
+    param_idx: u32,
+    mean: f32,
+    sigma: f32,
+) -> f32 {
     mean + gaussian_f32(seed, sweep_idx, param_idx) * sigma
 }
 
@@ -235,7 +240,8 @@ pub fn generate_gaussian_parameters_f32(
 
     for sweep_idx in 0..num_sweeps {
         for (param_idx, (mean, sigma)) in means.iter().zip(sigmas.iter()).enumerate() {
-            let value = gaussian_scaled_f32(seed, sweep_idx as u32, param_idx as u32, *mean, *sigma);
+            let value =
+                gaussian_scaled_f32(seed, sweep_idx as u32, param_idx as u32, *mean, *sigma);
             result.push(value);
         }
     }
@@ -403,11 +409,7 @@ mod tests {
         let std_dev = variance.sqrt();
 
         // Mean should be close to 0 (within 0.05)
-        assert!(
-            mean.abs() < 0.05,
-            "Gaussian mean = {} (expected ~0)",
-            mean
-        );
+        assert!(mean.abs() < 0.05, "Gaussian mean = {} (expected ~0)", mean);
 
         // Std dev should be close to 1 (within 0.05)
         assert!(

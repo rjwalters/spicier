@@ -1,12 +1,12 @@
 //! Benchmark comparing CPU vs Faer vs Accelerate vs Metal batched sweep performance.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use nalgebra::DVector;
-use spicier_batched_sweep::{solve_batched_sweep_gpu, BackendSelector, BackendType};
 #[cfg(any(feature = "metal", feature = "faer", feature = "accelerate"))]
 use spicier_batched_sweep::GpuBatchConfig;
+use spicier_batched_sweep::{BackendSelector, BackendType, solve_batched_sweep_gpu};
 #[cfg(feature = "faer")]
-use spicier_batched_sweep::{FaerBatchedSolver, FaerSparseCachedBatchedSolver, BatchedLuSolver};
+use spicier_batched_sweep::{BatchedLuSolver, FaerBatchedSolver, FaerSparseCachedBatchedSolver};
 use spicier_solver::{
     ConvergenceCriteria, DispatchConfig, MonteCarloGenerator, ParameterVariation, SweepStamper,
     SweepStamperFactory,
@@ -92,8 +92,15 @@ fn run_cpu_sweep(batch_size: usize, matrix_size: usize) {
     let config = DispatchConfig::default();
     let backend = BackendSelector::cpu_only();
 
-    let _ = solve_batched_sweep_gpu(&backend, &factory, &generator, &variations, &criteria, &config)
-        .unwrap();
+    let _ = solve_batched_sweep_gpu(
+        &backend,
+        &factory,
+        &generator,
+        &variations,
+        &criteria,
+        &config,
+    )
+    .unwrap();
 }
 
 #[cfg(feature = "faer")]
@@ -109,8 +116,15 @@ fn run_faer_sweep(batch_size: usize, matrix_size: usize) {
     let config = DispatchConfig::default();
     let backend = BackendSelector::prefer_faer();
 
-    let _ = solve_batched_sweep_gpu(&backend, &factory, &generator, &variations, &criteria, &config)
-        .unwrap();
+    let _ = solve_batched_sweep_gpu(
+        &backend,
+        &factory,
+        &generator,
+        &variations,
+        &criteria,
+        &config,
+    )
+    .unwrap();
 }
 
 #[cfg(feature = "accelerate")]
@@ -126,8 +140,15 @@ fn run_accelerate_sweep(batch_size: usize, matrix_size: usize) {
     let config = DispatchConfig::default();
     let backend = BackendSelector::prefer_accelerate();
 
-    let _ = solve_batched_sweep_gpu(&backend, &factory, &generator, &variations, &criteria, &config)
-        .unwrap();
+    let _ = solve_batched_sweep_gpu(
+        &backend,
+        &factory,
+        &generator,
+        &variations,
+        &criteria,
+        &config,
+    )
+    .unwrap();
 }
 
 #[cfg(feature = "metal")]
@@ -147,8 +168,15 @@ fn run_metal_sweep(batch_size: usize, matrix_size: usize) {
         max_batch_per_launch: 65535,
     });
 
-    let _ = solve_batched_sweep_gpu(&backend, &factory, &generator, &variations, &criteria, &config)
-        .unwrap();
+    let _ = solve_batched_sweep_gpu(
+        &backend,
+        &factory,
+        &generator,
+        &variations,
+        &criteria,
+        &config,
+    )
+    .unwrap();
 }
 
 #[cfg(feature = "mps")]
@@ -168,8 +196,15 @@ fn run_mps_sweep(batch_size: usize, matrix_size: usize) {
         max_batch_per_launch: 65535,
     });
 
-    let _ = solve_batched_sweep_gpu(&backend, &factory, &generator, &variations, &criteria, &config)
-        .unwrap();
+    let _ = solve_batched_sweep_gpu(
+        &backend,
+        &factory,
+        &generator,
+        &variations,
+        &criteria,
+        &config,
+    )
+    .unwrap();
 }
 
 fn bench_sweep_backends(c: &mut Criterion) {
@@ -193,9 +228,11 @@ fn bench_sweep_backends(c: &mut Criterion) {
         let param = format!("{}x{}", batch_size, matrix_size);
 
         // CPU benchmark (nalgebra)
-        group.bench_with_input(BenchmarkId::new("CPU-nalgebra", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
-            b.iter(|| run_cpu_sweep(bs, ms))
-        });
+        group.bench_with_input(
+            BenchmarkId::new("CPU-nalgebra", &param),
+            &(batch_size, matrix_size),
+            |b, &(bs, ms)| b.iter(|| run_cpu_sweep(bs, ms)),
+        );
 
         // Faer benchmark (if available)
         #[cfg(feature = "faer")]
@@ -203,9 +240,11 @@ fn bench_sweep_backends(c: &mut Criterion) {
             let faer_backend = BackendSelector::prefer_faer();
             if let Ok(solver) = faer_backend.create_solver() {
                 if solver.backend_type() == BackendType::Faer {
-                    group.bench_with_input(BenchmarkId::new("CPU-faer", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
-                        b.iter(|| run_faer_sweep(bs, ms))
-                    });
+                    group.bench_with_input(
+                        BenchmarkId::new("CPU-faer", &param),
+                        &(batch_size, matrix_size),
+                        |b, &(bs, ms)| b.iter(|| run_faer_sweep(bs, ms)),
+                    );
                 }
             }
         }
@@ -216,9 +255,11 @@ fn bench_sweep_backends(c: &mut Criterion) {
             let accel_backend = BackendSelector::prefer_accelerate();
             if let Ok(solver) = accel_backend.create_solver() {
                 if solver.backend_type() == BackendType::Accelerate {
-                    group.bench_with_input(BenchmarkId::new("CPU-accelerate", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
-                        b.iter(|| run_accelerate_sweep(bs, ms))
-                    });
+                    group.bench_with_input(
+                        BenchmarkId::new("CPU-accelerate", &param),
+                        &(batch_size, matrix_size),
+                        |b, &(bs, ms)| b.iter(|| run_accelerate_sweep(bs, ms)),
+                    );
                 }
             }
         }
@@ -234,9 +275,11 @@ fn bench_sweep_backends(c: &mut Criterion) {
 
             if let Ok(solver) = metal_backend.create_solver() {
                 if solver.backend_type() == BackendType::Metal {
-                    group.bench_with_input(BenchmarkId::new("Metal", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
-                        b.iter(|| run_metal_sweep(bs, ms))
-                    });
+                    group.bench_with_input(
+                        BenchmarkId::new("Metal", &param),
+                        &(batch_size, matrix_size),
+                        |b, &(bs, ms)| b.iter(|| run_metal_sweep(bs, ms)),
+                    );
                 }
             }
         }
@@ -252,9 +295,11 @@ fn bench_sweep_backends(c: &mut Criterion) {
 
             if let Ok(solver) = mps_backend.create_solver() {
                 if solver.backend_type() == BackendType::Mps {
-                    group.bench_with_input(BenchmarkId::new("MPS", &param), &(batch_size, matrix_size), |b, &(bs, ms)| {
-                        b.iter(|| run_mps_sweep(bs, ms))
-                    });
+                    group.bench_with_input(
+                        BenchmarkId::new("MPS", &param),
+                        &(batch_size, matrix_size),
+                        |b, &(bs, ms)| b.iter(|| run_mps_sweep(bs, ms)),
+                    );
                 }
             }
         }
@@ -316,11 +361,7 @@ fn bench_dense_vs_sparse_cached(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("faer-dense", &param),
             &(batch_size, n),
-            |b, &(bs, sz)| {
-                b.iter(|| {
-                    dense_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap()
-                })
-            },
+            |b, &(bs, sz)| b.iter(|| dense_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap()),
         );
 
         // Sparse cached Faer benchmark
@@ -331,9 +372,7 @@ fn bench_dense_vs_sparse_cached(c: &mut Criterion) {
             |b, &(bs, sz)| {
                 // Reset cache before each iteration to measure cold + warm behavior
                 sparse_solver.reset_cache();
-                b.iter(|| {
-                    sparse_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap()
-                })
+                b.iter(|| sparse_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap())
             },
         );
 
@@ -345,9 +384,7 @@ fn bench_dense_vs_sparse_cached(c: &mut Criterion) {
             &(batch_size, n),
             |b, &(bs, sz)| {
                 // Cache is already warm, measure pure numeric factorization
-                b.iter(|| {
-                    sparse_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap()
-                })
+                b.iter(|| sparse_solver.solve_batch(&matrices, &rhs, sz, bs).unwrap())
             },
         );
     }

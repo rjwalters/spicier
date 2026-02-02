@@ -267,15 +267,13 @@ impl BackendSelector {
     fn try_create_backend(&self, backend: BackendType) -> Option<Box<dyn BatchedLuSolver>> {
         match backend {
             #[cfg(feature = "cuda")]
-            BackendType::Cuda => {
-                match crate::cuda::CudaBatchedSolver::new(self.config.clone()) {
-                    Ok(solver) => Some(Box::new(solver)),
-                    Err(e) => {
-                        log::debug!("CUDA backend unavailable: {}", e);
-                        None
-                    }
+            BackendType::Cuda => match crate::cuda::CudaBatchedSolver::new(self.config.clone()) {
+                Ok(solver) => Some(Box::new(solver)),
+                Err(e) => {
+                    log::debug!("CUDA backend unavailable: {}", e);
+                    None
                 }
-            }
+            },
             #[cfg(not(feature = "cuda"))]
             BackendType::Cuda => None,
 
@@ -293,33 +291,27 @@ impl BackendSelector {
             BackendType::Metal => None,
 
             #[cfg(feature = "mps")]
-            BackendType::Mps => {
-                match crate::mps::MpsBatchedSolver::new(self.config.clone()) {
-                    Ok(solver) => Some(Box::new(solver)),
-                    Err(e) => {
-                        log::debug!("MPS backend unavailable: {}", e);
-                        None
-                    }
+            BackendType::Mps => match crate::mps::MpsBatchedSolver::new(self.config.clone()) {
+                Ok(solver) => Some(Box::new(solver)),
+                Err(e) => {
+                    log::debug!("MPS backend unavailable: {}", e);
+                    None
                 }
-            }
+            },
             #[cfg(not(feature = "mps"))]
             BackendType::Mps => None,
 
             #[cfg(feature = "faer")]
-            BackendType::Faer => {
-                Some(Box::new(crate::faer_solver::FaerBatchedSolver::new(
-                    self.config.clone(),
-                )))
-            }
+            BackendType::Faer => Some(Box::new(crate::faer_solver::FaerBatchedSolver::new(
+                self.config.clone(),
+            ))),
             #[cfg(not(feature = "faer"))]
             BackendType::Faer => None,
 
             #[cfg(feature = "accelerate")]
-            BackendType::Accelerate => {
-                Some(Box::new(crate::accelerate_solver::AccelerateBatchedSolver::new(
-                    self.config.clone(),
-                )))
-            }
+            BackendType::Accelerate => Some(Box::new(
+                crate::accelerate_solver::AccelerateBatchedSolver::new(self.config.clone()),
+            )),
             #[cfg(not(feature = "accelerate"))]
             BackendType::Accelerate => None,
 
