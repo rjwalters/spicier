@@ -1897,3 +1897,62 @@ let overall_yield = analysis.compute_yield(&solutions, n, batch_size);
 - Yield specification checking
 - Multi-spec yield analysis
 - Complete sweep summary
+
+### 9b-3: Pipelined Assembly + Solve
+
+Implemented double-buffered pipelined execution for batched sweeps.
+
+**New module: `spicier-batched-sweep/src/pipeline.rs`**
+
+**Key types:**
+```rust
+// Configuration for pipelining
+struct PipelineConfig {
+    chunk_size: usize,   // Points per batch
+    num_buffers: usize,  // 2 = double buffering
+}
+
+// Pre-allocated batch buffer
+struct BatchBuffer {
+    matrices: Vec<f64>,  // Pre-allocated
+    rhs: Vec<f64>,
+    system_size: usize,
+    batch_size: usize,
+}
+
+// Pipelined executor
+struct PipelinedSweep<'a> {
+    config: PipelineConfig,
+    solver: &'a dyn BatchedLuSolver,
+}
+```
+
+**Pipeline architecture:**
+```
+Time -->
+CPU:  [Assemble B0] [Assemble B1] [Assemble B2] ...
+GPU:                [Solve B0   ] [Solve B1   ] ...
+                    ^--- overlap ---^
+```
+
+**Features:**
+- `PipelineConfig::auto()` - Heuristic chunk size selection
+- `BatchBuffer` - Pre-allocated storage avoids per-batch allocations
+- Sequential fallback for small sweeps (<100 points)
+- Proper remainder handling (e.g., 100 points / 30 chunk = 30,30,30,10)
+
+**API:**
+```rust
+let config = PipelineConfig::with_chunk_size(1000);
+let pipeline = PipelinedSweep::new(config, &solver);
+let result = pipeline.execute(&factory, &points, system_size)?;
+```
+
+**Tests:** 5 tests covering:
+- Default configuration
+- Auto chunk size selection
+- Sequential execution path
+- Pipelined execution with multiple chunks
+- Remainder chunk handling
+
+**Note:** True async GPU dispatch was deprioritized based on 9b-1 analysis showing GPU is 3-13x slower than parallel CPU for batched LU on Apple Silicon. The pipelining infrastructure is in place for future CUDA optimization or if GPU performance improves.

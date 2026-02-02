@@ -42,6 +42,7 @@
 pub mod batch_layout;
 pub mod convergence;
 mod error;
+pub mod pipeline;
 pub mod rng;
 mod solver;
 pub mod statistics;
