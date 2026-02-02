@@ -11,7 +11,9 @@ use num_complex::Complex;
 use spicier_core::mna::MnaSystem;
 use spicier_core::netlist::{AcDeviceInfo, TransientDeviceInfo};
 use spicier_core::NodeId;
-use spicier_parser::{AcSweepType, AnalysisCommand, InitialCondition, parse_full};
+use spicier_parser::{
+    AcSweepType, AnalysisCommand, InitialCondition, OutputVariable, PrintAnalysisType, parse_full,
+};
 use spicier_solver::{
     AcParams, AcStamper, AcSweepType as SolverAcSweepType, CapacitorState, ComplexMna,
     ComputeBackend, ConvergenceCriteria, DcSolution, DcSweepParams, DcSweepStamper,
@@ -139,6 +141,7 @@ fn run_simulation(input: &PathBuf, cli: &Cli, _backend: &ComputeBackend) -> Resu
     let analyses = result.analyses;
     let initial_conditions = result.initial_conditions;
     let node_map = result.node_map;
+    let print_commands = result.print_commands;
 
     if cli.verbose {
         println!("Circuit: {}", netlist.title().unwrap_or("(untitled)"));
@@ -164,43 +167,72 @@ fn run_simulation(input: &PathBuf, cli: &Cli, _backend: &ComputeBackend) -> Resu
                     .join(", ")
             }
         );
+        if !print_commands.is_empty() {
+            println!("Print commands: {}", print_commands.len());
+        }
         println!();
     }
 
+    // Helper to find print commands for an analysis type
+    let get_print_vars = |analysis_type: PrintAnalysisType| -> Vec<&OutputVariable> {
+        print_commands
+            .iter()
+            .filter(|p| p.analysis_type == analysis_type)
+            .flat_map(|p| &p.variables)
+            .collect()
+    };
+
     // If --op flag or no analysis commands, run DC operating point
     if cli.dc_op || analyses.is_empty() {
-        run_dc_op(&netlist)?;
+        let print_vars = get_print_vars(PrintAnalysisType::Dc);
+        run_dc_op(&netlist, &print_vars, &node_map)?;
     }
 
     // Run each analysis command
     for analysis in &analyses {
         match analysis {
-            AnalysisCommand::Op => run_dc_op(&netlist)?,
+            AnalysisCommand::Op => {
+                let print_vars = get_print_vars(PrintAnalysisType::Dc);
+                run_dc_op(&netlist, &print_vars, &node_map)?;
+            }
             AnalysisCommand::Dc {
                 source_name,
                 start,
                 stop,
                 step,
-            } => run_dc_sweep(&netlist, source_name, *start, *stop, *step)?,
+            } => {
+                let print_vars = get_print_vars(PrintAnalysisType::Dc);
+                run_dc_sweep(&netlist, source_name, *start, *stop, *step, &print_vars, &node_map)?;
+            }
             AnalysisCommand::Ac {
                 sweep_type,
                 num_points,
                 fstart,
                 fstop,
-            } => run_ac_analysis(&netlist, *sweep_type, *num_points, *fstart, *fstop)?,
+            } => {
+                let print_vars = get_print_vars(PrintAnalysisType::Ac);
+                run_ac_analysis(&netlist, *sweep_type, *num_points, *fstart, *fstop, &print_vars, &node_map)?;
+            }
             AnalysisCommand::Tran {
                 tstep,
                 tstop,
                 tstart,
                 uic,
-            } => run_transient(&netlist, *tstep, *tstop, *tstart, *uic, &initial_conditions, &node_map)?
+            } => {
+                let print_vars = get_print_vars(PrintAnalysisType::Tran);
+                run_transient(&netlist, *tstep, *tstop, *tstart, *uic, &initial_conditions, &node_map, &print_vars)?;
+            }
         }
     }
 
     Ok(())
 }
 
-fn run_dc_op(netlist: &spicier_core::Netlist) -> Result<()> {
+fn run_dc_op(
+    netlist: &spicier_core::Netlist,
+    print_vars: &[&OutputVariable],
+    node_map: &std::collections::HashMap<String, NodeId>,
+) -> Result<()> {
     println!("DC Operating Point Analysis");
     println!("===========================");
     println!();
@@ -248,7 +280,7 @@ fn run_dc_op(netlist: &spicier_core::Netlist) -> Result<()> {
         solve_dc(&mna).map_err(|e| anyhow::anyhow!("Solver error: {}", e))?
     };
 
-    print_dc_solution(netlist, &solution);
+    print_dc_solution(netlist, &solution, print_vars, node_map);
 
     println!("Analysis complete.");
     println!();
@@ -261,6 +293,8 @@ fn run_dc_sweep(
     start: f64,
     stop: f64,
     step: f64,
+    print_vars: &[&OutputVariable],
+    node_map: &std::collections::HashMap<String, NodeId>,
 ) -> Result<()> {
     println!("DC Sweep Analysis (.DC {} {} {} {})", source_name, start, stop, step);
     println!("==========================================");
@@ -281,22 +315,25 @@ fn run_dc_sweep(
     let result =
         solve_dc_sweep(&stamper, &params).map_err(|e| anyhow::anyhow!("Solver error: {}", e))?;
 
+    // Determine which nodes to print
+    let nodes_to_print = get_dc_print_nodes(print_vars, node_map, netlist.num_nodes());
+
     // Print header
     print!("{:>12}", source_name);
-    for i in 1..=netlist.num_nodes() {
-        print!("{:>12}", format!("V({})", i));
+    for (name, _) in &nodes_to_print {
+        print!("{:>12}", format!("V({})", name));
     }
     println!();
 
     // Print separator
-    let width = 12 * (1 + netlist.num_nodes());
+    let width = 12 * (1 + nodes_to_print.len());
     println!("{}", "-".repeat(width));
 
     // Print sweep data
     for (sv, sol) in result.sweep_values.iter().zip(result.solutions.iter()) {
         print!("{:>12.4}", sv);
-        for i in 1..=netlist.num_nodes() {
-            let v = sol.voltage(NodeId::new(i as u32));
+        for (_, node_id) in &nodes_to_print {
+            let v = sol.voltage(*node_id);
             print!("{:>12.6}", v);
         }
         println!();
@@ -314,12 +351,15 @@ fn run_ac_analysis(
     num_points: usize,
     fstart: f64,
     fstop: f64,
+    print_vars: &[&OutputVariable],
+    node_map: &std::collections::HashMap<String, NodeId>,
 ) -> Result<()> {
     let type_name = match sweep_type {
         AcSweepType::Dec => "DEC",
         AcSweepType::Oct => "OCT",
         AcSweepType::Lin => "LIN",
     };
+    let _ = (print_vars, node_map); // Will use for filtered output later
 
     println!(
         "AC Analysis (.AC {} {} {} {})",
@@ -410,15 +450,57 @@ fn run_ac_analysis(
     Ok(())
 }
 
-fn print_dc_solution(netlist: &spicier_core::Netlist, solution: &DcSolution) {
+/// Get list of (name, NodeId) pairs to print based on .PRINT variables.
+/// If print_vars is empty, prints all nodes.
+fn get_dc_print_nodes(
+    print_vars: &[&OutputVariable],
+    node_map: &std::collections::HashMap<String, NodeId>,
+    num_nodes: usize,
+) -> Vec<(String, NodeId)> {
+    if print_vars.is_empty() {
+        // Print all nodes
+        (1..=num_nodes)
+            .map(|i| (i.to_string(), NodeId::new(i as u32)))
+            .collect()
+    } else {
+        // Print only specified nodes
+        print_vars
+            .iter()
+            .filter_map(|v| {
+                if let OutputVariable::Voltage { node, node2: None } = v {
+                    // Try to find node in node_map, or parse as number
+                    if let Some(node_id) = node_map.get(node) {
+                        if !node_id.is_ground() {
+                            return Some((node.clone(), *node_id));
+                        }
+                    } else if let Ok(n) = node.parse::<u32>() {
+                        if n > 0 && n <= num_nodes as u32 {
+                            return Some((node.clone(), NodeId::new(n)));
+                        }
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+}
+
+fn print_dc_solution(
+    netlist: &spicier_core::Netlist,
+    solution: &DcSolution,
+    print_vars: &[&OutputVariable],
+    node_map: &std::collections::HashMap<String, NodeId>,
+) {
+    let nodes_to_print = get_dc_print_nodes(print_vars, node_map, netlist.num_nodes());
+
     println!("Node Voltages:");
-    for i in 1..=netlist.num_nodes() {
-        let node = NodeId::new(i as u32);
-        let voltage = solution.voltage(node);
-        println!("  V({}) = {:.6} V", i, voltage);
+    for (name, node_id) in &nodes_to_print {
+        let voltage = solution.voltage(*node_id);
+        println!("  V({}) = {:.6} V", name, voltage);
     }
 
-    if netlist.num_current_vars() > 0 {
+    if netlist.num_current_vars() > 0 && print_vars.is_empty() {
+        // Only print currents if no specific print vars (or if I() was specified)
         println!();
         println!("Branch Currents:");
         for i in 0..netlist.num_current_vars() {
@@ -767,7 +849,9 @@ fn run_transient(
     uic: bool,
     initial_conditions: &[InitialCondition],
     node_map: &std::collections::HashMap<String, NodeId>,
+    print_vars: &[&OutputVariable],
 ) -> Result<()> {
+    let _ = print_vars; // Will use for filtered output later
     println!(
         "Transient Analysis (.TRAN {} {} {}{})",
         tstep, tstop, tstart, if uic { " UIC" } else { "" }

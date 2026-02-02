@@ -60,6 +60,48 @@ pub struct InitialCondition {
     pub voltage: f64,
 }
 
+/// Type of analysis for .PRINT command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintAnalysisType {
+    /// DC operating point or DC sweep.
+    Dc,
+    /// AC analysis.
+    Ac,
+    /// Transient analysis.
+    Tran,
+}
+
+/// An output variable specification from .PRINT command.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OutputVariable {
+    /// Node voltage: V(node) or V(node1, node2) for differential.
+    Voltage {
+        node: String,
+        node2: Option<String>,
+    },
+    /// Device current: I(device).
+    Current { device: String },
+    /// Real part of voltage (AC): VR(node).
+    VoltageReal { node: String },
+    /// Imaginary part of voltage (AC): VI(node).
+    VoltageImag { node: String },
+    /// Magnitude of voltage (AC): VM(node).
+    VoltageMag { node: String },
+    /// Phase of voltage (AC): VP(node).
+    VoltagePhase { node: String },
+    /// Magnitude in dB (AC): VDB(node).
+    VoltageDb { node: String },
+}
+
+/// A .PRINT command specifying output variables for an analysis type.
+#[derive(Debug, Clone)]
+pub struct PrintCommand {
+    /// Type of analysis this print applies to.
+    pub analysis_type: PrintAnalysisType,
+    /// Variables to output.
+    pub variables: Vec<OutputVariable>,
+}
+
 /// Result of parsing a SPICE netlist.
 ///
 /// Contains both the circuit (Netlist) and analysis commands.
@@ -73,6 +115,8 @@ pub struct ParseResult {
     pub initial_conditions: Vec<InitialCondition>,
     /// Node name to NodeId mapping.
     pub node_map: HashMap<String, NodeId>,
+    /// Print commands specifying output variables.
+    pub print_commands: Vec<PrintCommand>,
 }
 
 /// Parse a SPICE netlist string into a Netlist.
@@ -107,6 +151,7 @@ struct Parser<'a> {
     netlist: Netlist,
     analyses: Vec<AnalysisCommand>,
     initial_conditions: Vec<InitialCondition>,
+    print_commands: Vec<PrintCommand>,
     node_map: HashMap<String, NodeId>,
     next_current_index: usize,
     models: HashMap<String, ModelDefinition>,
@@ -126,6 +171,7 @@ impl<'a> Parser<'a> {
             netlist: Netlist::new(),
             analyses: Vec::new(),
             initial_conditions: Vec::new(),
+            print_commands: Vec::new(),
             node_map,
             next_current_index: 0,
             models: HashMap::new(),
@@ -164,6 +210,7 @@ impl<'a> Parser<'a> {
             analyses: self.analyses,
             initial_conditions: self.initial_conditions,
             node_map: self.node_map,
+            print_commands: self.print_commands,
         })
     }
 
@@ -221,6 +268,9 @@ impl<'a> Parser<'a> {
             }
             "IC" => {
                 self.parse_ic_command(line)?;
+            }
+            "PRINT" => {
+                self.parse_print_command(line)?;
             }
             _ => {
                 // Unknown command - skip to EOL
@@ -420,6 +470,140 @@ impl<'a> Parser<'a> {
 
         self.skip_to_eol();
         Ok(())
+    }
+
+    /// Parse .PRINT analysis_type var1 var2 ...
+    /// Examples:
+    ///   .PRINT DC V(1) V(2) I(R1)
+    ///   .PRINT AC VM(out) VP(out) VDB(out)
+    ///   .PRINT TRAN V(1) V(2)
+    fn parse_print_command(&mut self, line: usize) -> Result<()> {
+        // Parse analysis type (DC, AC, TRAN)
+        let analysis_type = match self.peek() {
+            Token::Name(n) => {
+                let at = match n.to_uppercase().as_str() {
+                    "DC" => PrintAnalysisType::Dc,
+                    "AC" => PrintAnalysisType::Ac,
+                    "TRAN" => PrintAnalysisType::Tran,
+                    other => {
+                        return Err(Error::ParseError {
+                            line,
+                            message: format!("Unknown .PRINT analysis type: {}", other),
+                        });
+                    }
+                };
+                self.advance();
+                at
+            }
+            _ => {
+                return Err(Error::ParseError {
+                    line,
+                    message: "Expected analysis type (DC, AC, TRAN) for .PRINT".to_string(),
+                });
+            }
+        };
+
+        let mut variables = Vec::new();
+
+        // Parse output variables until EOL
+        loop {
+            match self.peek() {
+                Token::Eol | Token::Eof => break,
+                Token::Name(name) => {
+                    let name = name.clone();
+                    self.advance();
+
+                    // Parse output variable: V(node), I(device), VM(node), VP(node), etc.
+                    if let Some(var) = self.parse_output_variable(&name, line)? {
+                        variables.push(var);
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        if !variables.is_empty() {
+            self.print_commands.push(PrintCommand {
+                analysis_type,
+                variables,
+            });
+        }
+
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse a single output variable like V(node), I(device), VM(node), etc.
+    fn parse_output_variable(&mut self, name: &str, line: usize) -> Result<Option<OutputVariable>> {
+        let upper = name.to_uppercase();
+
+        // Check if this is a function-style variable (needs parentheses)
+        if !matches!(self.peek(), Token::LParen) {
+            // Not a function - might be a simple reference or unknown
+            return Ok(None);
+        }
+        self.advance(); // consume (
+
+        // Get the first argument (node or device name)
+        let arg1 = match self.peek() {
+            Token::Name(n) | Token::Value(n) => {
+                let n = n.clone();
+                self.advance();
+                n
+            }
+            _ => {
+                return Err(Error::ParseError {
+                    line,
+                    message: format!("Expected node/device name after {}(", name),
+                });
+            }
+        };
+
+        // Check for second argument (differential voltage)
+        let arg2 = if matches!(self.peek(), Token::Comma) {
+            self.advance(); // consume ,
+            match self.peek() {
+                Token::Name(n) | Token::Value(n) => {
+                    let n = n.clone();
+                    self.advance();
+                    Some(n)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        // Expect closing paren
+        if !matches!(self.peek(), Token::RParen) {
+            return Err(Error::ParseError {
+                line,
+                message: format!("Expected ')' after {} argument", name),
+            });
+        }
+        self.advance(); // consume )
+
+        // Map function name to OutputVariable
+        let var = match upper.as_str() {
+            "V" => OutputVariable::Voltage {
+                node: arg1,
+                node2: arg2,
+            },
+            "I" => OutputVariable::Current { device: arg1 },
+            "VR" => OutputVariable::VoltageReal { node: arg1 },
+            "VI" => OutputVariable::VoltageImag { node: arg1 },
+            "VM" => OutputVariable::VoltageMag { node: arg1 },
+            "VP" => OutputVariable::VoltagePhase { node: arg1 },
+            "VDB" => OutputVariable::VoltageDb { node: arg1 },
+            _ => {
+                // Unknown function, skip it
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(var))
     }
 
     fn parse_element(&mut self, name: &str) -> Result<()> {
@@ -1312,5 +1496,64 @@ H1 2 0 V1 100.0
         let netlist = parse(input).unwrap();
         assert_eq!(netlist.num_devices(), 4);
         assert_eq!(netlist.num_current_vars(), 2); // V1 + H1
+    }
+
+    #[test]
+    fn test_parse_print_command() {
+        let input = r#"Print Test
+V1 1 0 10
+R1 1 2 1k
+R2 2 0 1k
+.PRINT DC V(1) V(2)
+.OP
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.print_commands.len(), 1);
+        assert_eq!(result.print_commands[0].analysis_type, PrintAnalysisType::Dc);
+        assert_eq!(result.print_commands[0].variables.len(), 2);
+
+        // Check first variable is V(1)
+        assert!(matches!(
+            &result.print_commands[0].variables[0],
+            OutputVariable::Voltage { node, node2: None } if node == "1"
+        ));
+
+        // Check second variable is V(2)
+        assert!(matches!(
+            &result.print_commands[0].variables[1],
+            OutputVariable::Voltage { node, node2: None } if node == "2"
+        ));
+    }
+
+    #[test]
+    fn test_parse_print_ac() {
+        let input = r#"AC Print Test
+V1 1 0 1
+R1 1 2 1k
+C1 2 0 1u
+.PRINT AC VM(2) VP(2) VDB(2)
+.AC DEC 10 1 1e6
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert_eq!(result.print_commands.len(), 1);
+        assert_eq!(result.print_commands[0].analysis_type, PrintAnalysisType::Ac);
+        assert_eq!(result.print_commands[0].variables.len(), 3);
+
+        assert!(matches!(
+            &result.print_commands[0].variables[0],
+            OutputVariable::VoltageMag { node } if node == "2"
+        ));
+        assert!(matches!(
+            &result.print_commands[0].variables[1],
+            OutputVariable::VoltagePhase { node } if node == "2"
+        ));
+        assert!(matches!(
+            &result.print_commands[0].variables[2],
+            OutputVariable::VoltageDb { node } if node == "2"
+        ));
     }
 }

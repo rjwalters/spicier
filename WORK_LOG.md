@@ -892,3 +892,43 @@ Added TR-BDF2 (Trapezoidal Rule - 2nd order Backward Differentiation Formula) in
 - Same 2nd order accuracy as Trapezoidal
 
 **Tests:** 1 new test (test_rc_charging_trbdf2)
+
+### Phase 4: .PRINT Output Infrastructure
+
+Added .PRINT command support for specifying which variables to output in analysis results. This is a standard SPICE feature that allows users to control output instead of printing all nodes.
+
+**Parser additions (`spicier-parser/src/parser.rs`):**
+- `PrintAnalysisType` enum: Dc, Ac, Tran
+- `OutputVariable` enum: Voltage, Current, VoltageReal, VoltageImag, VoltageMag, VoltagePhase, VoltageDb
+- `PrintCommand` struct with analysis_type and variables list
+- `parse_print_command()` parses `.PRINT type var1 var2 ...`
+- `parse_output_variable()` parses V(node), I(device), VM(node), VP(node), VDB(node), etc.
+- Added `Comma` token to lexer for V(node1, node2) differential voltage syntax
+- `ParseResult.print_commands` field added
+
+**CLI integration (`spicier-cli/src/main.rs`):**
+- `get_dc_print_nodes()` helper determines which nodes to print
+- `print_dc_solution()` respects print variables
+- `run_dc_op()`, `run_dc_sweep()`, `run_ac_analysis()`, `run_transient()` accept print_vars
+- Without .PRINT: outputs all nodes + branch currents
+- With .PRINT: outputs only specified variables
+
+**Supported output variables:**
+- `V(node)` - Node voltage
+- `V(node1, node2)` - Differential voltage (parsed, not yet used)
+- `I(device)` - Device current
+- `VM(node)` - AC voltage magnitude
+- `VP(node)` - AC voltage phase
+- `VDB(node)` - AC voltage in dB
+- `VR(node)` - AC voltage real part
+- `VI(node)` - AC voltage imaginary part
+
+**Example:**
+```spice
+.PRINT DC V(1) V(2)
+.PRINT AC VM(out) VP(out)
+.PRINT TRAN V(1) V(2)
+```
+
+**Tests:** 2 new parser tests (test_parse_print_command, test_parse_print_ac)
+**New examples:** print_test.sp, no_print_test.sp

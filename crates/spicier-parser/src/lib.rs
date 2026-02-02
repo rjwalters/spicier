@@ -23,4 +23,7 @@ pub mod lexer;
 pub mod parser;
 
 pub use error::{Error, Result};
-pub use parser::{AcSweepType, AnalysisCommand, InitialCondition, ParseResult, parse, parse_full};
+pub use parser::{
+    AcSweepType, AnalysisCommand, InitialCondition, OutputVariable, ParseResult, PrintAnalysisType,
+    PrintCommand, parse, parse_full,
+};

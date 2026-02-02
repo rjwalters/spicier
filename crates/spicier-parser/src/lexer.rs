@@ -19,6 +19,8 @@ pub enum Token {
     LParen,
     /// Closing parenthesis
     RParen,
+    /// Comma separator (for V(node1, node2) syntax)
+    Comma,
     /// End of line
     Eol,
     /// End of file
@@ -119,6 +121,14 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 Ok(SpannedToken {
                     token: Token::RParen,
+                    line,
+                    column,
+                })
+            }
+            Some(',') => {
+                self.advance();
+                Ok(SpannedToken {
+                    token: Token::Comma,
                     line,
                     column,
                 })

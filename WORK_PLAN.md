@@ -139,9 +139,9 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
   - DcSweepResult with voltage/current waveform accessors
   - CLI output with tabular sweep results
   - [ ] Multiple sweep variables
-- [ ] Output infrastructure
-  - .PRINT support
-  - Node voltage queries
+- [x] Output infrastructure
+  - .PRINT support (DC, AC, TRAN analysis types)
+  - V(node), I(device), VM, VP, VDB output variables
 
 **Dependencies:** Phase 2, Phase 3
 
