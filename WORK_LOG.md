@@ -1360,3 +1360,38 @@ Extended validation test suite to 26 tests covering more controlled sources, AC 
 - RL transient: Fixed inductor node connection (Some(1) instead of Some(0))
 
 **Test count:** 323 total tests passing (26 validation tests)
+
+### Phase 10: JSON Golden Data Infrastructure
+
+Added JSON-based golden data infrastructure for systematic validation against pre-computed ngspice results.
+
+**Golden data format (`tests/golden_data/`):**
+- `README.md` - Format documentation and tolerance guidelines
+- `dc_linear.json` - 8 DC linear circuit test cases
+- `dc_controlled_sources.json` - 6 controlled source test cases
+- `ac_filters.json` - 3 AC filter frequency response test cases
+- `transient.json` - 5 transient analysis test cases
+
+**Data structures (`ngspice_validation.rs`):**
+- `GoldenDataFile` - Root structure with generator info and circuits
+- `GoldenCircuit` - Individual circuit with netlist and analysis
+- `GoldenAnalysis` - Enum for dc_op, ac, and tran analysis types
+- Helper functions: `load_golden_data()`, `find_circuit()`
+
+**New validation tests (4):**
+- `test_golden_dc_linear` - Tests 8 linear DC circuits from JSON
+- `test_golden_dc_controlled_sources` - Tests VCVS and VCCS from JSON
+- `test_golden_ac_rc_lowpass` - Tests RC lowpass frequency response from JSON
+- `test_golden_tran_rc_charging` - Tests RC charging transient from JSON
+
+**Key features:**
+- Serde deserialization from JSON files
+- SPICE node number to solution index conversion
+- Configurable tolerances per analysis type
+- Support for voltage and current variables
+- Extensible to additional circuits and analysis types
+
+**Dependencies added:**
+- `serde` and `serde_json` as dev-dependencies for spicier-parser
+
+**Test count:** 328 total tests passing (30 validation tests)

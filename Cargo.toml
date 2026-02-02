@@ -52,6 +52,10 @@ log = "0.4"
 # CLI
 clap = { version = "4", features = ["derive"] }
 
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 # Testing/benchmarking
 criterion = "0.5"
 

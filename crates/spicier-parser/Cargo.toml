@@ -16,6 +16,8 @@ criterion.workspace = true
 spicier-solver.workspace = true
 nalgebra.workspace = true
 num-complex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [[bench]]
 name = "parser"

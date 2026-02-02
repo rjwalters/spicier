@@ -2022,6 +2022,8 @@ dependencies = [
  "criterion",
  "nalgebra",
  "num-complex",
+ "serde",
+ "serde_json",
  "spicier-core",
  "spicier-devices",
  "spicier-solver",

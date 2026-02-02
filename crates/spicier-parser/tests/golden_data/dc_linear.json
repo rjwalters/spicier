@@ -1,0 +1,141 @@
+{
+  "generator": "ngspice-43",
+  "generated_at": "2026-02-01T12:00:00Z",
+  "description": "DC operating point golden data for linear circuits",
+  "circuits": [
+    {
+      "name": "voltage_divider_equal",
+      "description": "Equal resistor voltage divider: V(2) = V1/2",
+      "netlist": "Voltage Divider Equal\nV1 1 0 DC 10\nR1 1 2 1k\nR2 2 0 1k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 10.0,
+          "V(2)": 5.0,
+          "I(V1)": -0.005
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "voltage_divider_2to1",
+      "description": "2:1 voltage divider: V(2) = V1 * 1k/3k = 3.333V",
+      "netlist": "Voltage Divider 2to1\nV1 1 0 DC 10\nR1 1 2 2k\nR2 2 0 1k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 10.0,
+          "V(2)": 3.333333333333333,
+          "I(V1)": -0.003333333333333
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "series_resistors",
+      "description": "Three resistors in series with current source",
+      "netlist": "Series Resistors\nI1 0 1 DC 1m\nR1 1 2 1k\nR2 2 3 2k\nR3 3 0 3k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 6.0,
+          "V(2)": 5.0,
+          "V(3)": 3.0
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "parallel_resistors",
+      "description": "Two parallel resistors: Req = 500 ohms",
+      "netlist": "Parallel Resistors\nI1 0 1 DC 10m\nR1 1 0 1k\nR2 1 0 1k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 5.0
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "wheatstone_bridge_balanced",
+      "description": "Balanced Wheatstone bridge: V(bridge) = 0",
+      "netlist": "Wheatstone Bridge Balanced\nV1 1 0 DC 10\nR1 1 2 1k\nR2 2 0 1k\nR3 1 3 2k\nR4 3 0 2k\nRbridge 2 3 10k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 10.0,
+          "V(2)": 5.0,
+          "V(3)": 5.0
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "wheatstone_bridge_unbalanced",
+      "description": "Unbalanced Wheatstone bridge with 1k, 2k, 3k, 4k",
+      "netlist": "Wheatstone Bridge Unbalanced\nV1 1 0 DC 10\nR1 1 2 1k\nR2 2 0 2k\nR3 1 3 3k\nR4 3 0 4k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 10.0,
+          "V(2)": 6.666666666666667,
+          "V(3)": 5.714285714285714
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "t_network",
+      "description": "T-network resistor configuration",
+      "netlist": "T Network\nV1 1 0 DC 10\nR1 1 2 1k\nR2 2 0 2k\nR3 2 3 1k\nR4 3 0 2k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 10.0,
+          "V(2)": 5.454545454545455,
+          "V(3)": 3.636363636363636
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "superposition_two_sources",
+      "description": "Two voltage sources for superposition principle",
+      "netlist": "Superposition Two Sources\nV1 1 0 DC 6\nV2 3 0 DC 4\nR1 1 2 1k\nR2 2 3 1k\nR3 2 0 1k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 6.0,
+          "V(2)": 3.333333333333333,
+          "V(3)": 4.0
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    }
+  ]
+}

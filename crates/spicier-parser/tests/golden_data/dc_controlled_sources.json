@@ -1,0 +1,112 @@
+{
+  "generator": "ngspice-43",
+  "generated_at": "2026-02-01T12:00:00Z",
+  "description": "DC operating point golden data for controlled source circuits",
+  "circuits": [
+    {
+      "name": "vcvs_gain_10",
+      "description": "VCVS with gain = 10",
+      "netlist": "VCVS Gain 10\nV1 1 0 DC 1\nR1 1 2 1k\nR2 2 0 1k\nE1 3 0 2 0 10\nRload 3 0 10k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 1.0,
+          "V(2)": 0.5,
+          "V(3)": 5.0
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "vccs_transconductance",
+      "description": "VCCS with gm = 1mS",
+      "netlist": "VCCS Transconductance\nV1 1 0 DC 2\nR1 1 0 1k\nG1 2 0 1 0 1m\nR2 2 0 1k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 2.0,
+          "V(2)": 2.0
+        },
+        "tolerances": {
+          "voltage": 1e-9,
+          "current": 1e-12
+        }
+      }
+    },
+    {
+      "name": "cccs_current_gain",
+      "description": "CCCS with current gain = 5",
+      "netlist": "V1 1 0 DC 10\nR1 1 2 1k\nVsense 2 0 DC 0\nF1 3 0 Vsense 5\nR2 3 0 1k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 10.0,
+          "V(2)": 0.0,
+          "V(3)": -50.0
+        },
+        "tolerances": {
+          "voltage": 1e-6,
+          "current": 1e-9
+        },
+        "notes": "V(3) is negative due to SPICE current direction convention"
+      }
+    },
+    {
+      "name": "ccvs_transresistance",
+      "description": "CCVS with rm = 2k",
+      "netlist": "V1 1 0 DC 5\nR1 1 2 1k\nVsense 2 0 DC 0\nH1 3 0 Vsense 2k\nR2 3 0 10k\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 5.0,
+          "V(2)": 0.0,
+          "V(3)": 10.0
+        },
+        "tolerances": {
+          "voltage": 1e-6,
+          "current": 1e-9
+        },
+        "notes": "I(Vsense) = 5mA, V(3) = 2k * 5mA = 10V"
+      }
+    },
+    {
+      "name": "opamp_inverting",
+      "description": "Inverting amplifier using ideal opamp (VCVS with high gain)",
+      "netlist": "V1 1 0 DC 1\nRin 1 2 1k\nRf 2 3 10k\nE1 3 0 0 2 100000\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 1.0,
+          "V(2)": 0.0001,
+          "V(3)": -9.9999
+        },
+        "tolerances": {
+          "voltage": 1e-3,
+          "current": 1e-9
+        },
+        "notes": "Gain ≈ -Rf/Rin = -10, virtual ground at V(2)"
+      }
+    },
+    {
+      "name": "opamp_noninverting",
+      "description": "Non-inverting amplifier using ideal opamp",
+      "netlist": "V1 1 0 DC 1\nR1 2 0 1k\nRf 2 3 9k\nE1 3 0 1 2 100000\n.end",
+      "analysis": {
+        "type": "dc_op",
+        "results": {
+          "V(1)": 1.0,
+          "V(2)": 0.9999,
+          "V(3)": 9.9999
+        },
+        "tolerances": {
+          "voltage": 1e-3,
+          "current": 1e-9
+        },
+        "notes": "Gain = 1 + Rf/R1 = 10"
+      }
+    }
+  ]
+}

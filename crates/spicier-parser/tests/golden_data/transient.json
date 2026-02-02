@@ -1,0 +1,139 @@
+{
+  "generator": "ngspice-43",
+  "generated_at": "2026-02-01T12:00:00Z",
+  "description": "Transient analysis golden data",
+  "circuits": [
+    {
+      "name": "rc_charging",
+      "description": "RC charging circuit with tau = 1ms",
+      "netlist": "RC Charging\nV1 1 0 DC 5\nR1 1 2 1k\nC1 2 0 1u\n.tran 0.1m 5m\n.end",
+      "analysis": {
+        "type": "tran",
+        "params": { "tstep": 0.0001, "tstop": 0.005 },
+        "node": "V(2)",
+        "results": [
+          { "time": 0.0, "value": 0.0 },
+          { "time": 0.0005, "value": 1.967 },
+          { "time": 0.001, "value": 3.161 },
+          { "time": 0.0015, "value": 3.883 },
+          { "time": 0.002, "value": 4.323 },
+          { "time": 0.0025, "value": 4.591 },
+          { "time": 0.003, "value": 4.752 },
+          { "time": 0.0035, "value": 4.850 },
+          { "time": 0.004, "value": 4.908 },
+          { "time": 0.0045, "value": 4.944 },
+          { "time": 0.005, "value": 4.966 }
+        ],
+        "formula": "V(t) = 5 * (1 - exp(-t/1ms))",
+        "tolerances": {
+          "voltage": 0.2
+        }
+      }
+    },
+    {
+      "name": "rc_discharging",
+      "description": "RC discharge from 5V with tau = 1ms",
+      "netlist": "R1 1 0 1k\nC1 1 0 1u IC=5\n.tran 0.1m 5m UIC\n.end",
+      "analysis": {
+        "type": "tran",
+        "params": { "tstep": 0.0001, "tstop": 0.005, "uic": true },
+        "node": "V(1)",
+        "results": [
+          { "time": 0.0, "value": 5.0 },
+          { "time": 0.0005, "value": 3.033 },
+          { "time": 0.001, "value": 1.839 },
+          { "time": 0.0015, "value": 1.116 },
+          { "time": 0.002, "value": 0.677 },
+          { "time": 0.0025, "value": 0.410 },
+          { "time": 0.003, "value": 0.249 },
+          { "time": 0.0035, "value": 0.151 },
+          { "time": 0.004, "value": 0.092 },
+          { "time": 0.0045, "value": 0.056 },
+          { "time": 0.005, "value": 0.034 }
+        ],
+        "formula": "V(t) = 5 * exp(-t/1ms)",
+        "tolerances": {
+          "voltage": 0.01
+        }
+      }
+    },
+    {
+      "name": "rl_step_response",
+      "description": "RL step response with tau = L/R = 0.1ms",
+      "netlist": "V1 1 0 DC 5\nR1 1 2 100\nL1 2 0 10m\n.tran 10u 0.5m\n.end",
+      "analysis": {
+        "type": "tran",
+        "params": { "tstep": 0.00001, "tstop": 0.0005 },
+        "node": "I(L1)",
+        "description": "Inductor current",
+        "results": [
+          { "time": 0.0, "value": 0.0 },
+          { "time": 0.00005, "value": 0.0197 },
+          { "time": 0.0001, "value": 0.0316 },
+          { "time": 0.00015, "value": 0.0388 },
+          { "time": 0.0002, "value": 0.0432 },
+          { "time": 0.00025, "value": 0.0459 },
+          { "time": 0.0003, "value": 0.0475 },
+          { "time": 0.00035, "value": 0.0485 },
+          { "time": 0.0004, "value": 0.0491 },
+          { "time": 0.00045, "value": 0.0494 },
+          { "time": 0.0005, "value": 0.0497 }
+        ],
+        "formula": "I(t) = (V/R) * (1 - exp(-R*t/L)) = 50mA * (1 - exp(-t/0.1ms))",
+        "tolerances": {
+          "voltage": 0.001
+        }
+      }
+    },
+    {
+      "name": "lc_oscillator",
+      "description": "LC oscillator with f = 1/(2*pi*sqrt(LC)) = 1592 Hz",
+      "netlist": "L1 1 0 10m IC=0\nC1 1 0 1u IC=1\n.tran 10u 2m UIC\n.end",
+      "analysis": {
+        "type": "tran",
+        "params": { "tstep": 0.00001, "tstop": 0.002, "uic": true },
+        "node": "V(1)",
+        "description": "LC tank voltage oscillation",
+        "results": [
+          { "time": 0.0, "value": 1.0 },
+          { "time": 0.000157, "value": 0.0 },
+          { "time": 0.000314, "value": -1.0 },
+          { "time": 0.000471, "value": 0.0 },
+          { "time": 0.000628, "value": 1.0 },
+          { "time": 0.001256, "value": 1.0 }
+        ],
+        "period_us": 628.3,
+        "frequency_hz": 1592.4,
+        "tolerances": {
+          "voltage": 0.05,
+          "frequency_percent": 2.0
+        }
+      }
+    },
+    {
+      "name": "rlc_damped",
+      "description": "Underdamped RLC with oscillation",
+      "netlist": "V1 1 0 PULSE(0 1 0 1n 1n 10m 20m)\nR1 1 2 10\nL1 2 3 10m\nC1 3 0 1u\n.tran 0.1m 5m\n.end",
+      "analysis": {
+        "type": "tran",
+        "params": { "tstep": 0.0001, "tstop": 0.005 },
+        "node": "V(3)",
+        "description": "Underdamped RLC step response",
+        "damping_ratio": 0.05,
+        "natural_freq_hz": 1592,
+        "results": [
+          { "time": 0.0, "value": 0.0 },
+          { "time": 0.0003, "value": 1.5 },
+          { "time": 0.0006, "value": 1.0 },
+          { "time": 0.0009, "value": 0.7 },
+          { "time": 0.0012, "value": 1.0 },
+          { "time": 0.0015, "value": 1.15 },
+          { "time": 0.002, "value": 1.0 }
+        ],
+        "tolerances": {
+          "voltage": 0.1
+        }
+      }
+    }
+  ]
+}

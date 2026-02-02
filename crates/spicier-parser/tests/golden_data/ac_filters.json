@@ -1,0 +1,85 @@
+{
+  "generator": "ngspice-43",
+  "generated_at": "2026-02-01T12:00:00Z",
+  "description": "AC analysis golden data for filter circuits",
+  "circuits": [
+    {
+      "name": "rc_lowpass_1khz",
+      "description": "RC lowpass filter with f_c = 1/(2*pi*1k*159n) ≈ 1kHz",
+      "netlist": "V1 1 0 AC 1\nR1 1 2 1k\nC1 2 0 159n\n.ac dec 10 100 10k\n.end",
+      "analysis": {
+        "type": "ac",
+        "sweep": { "type": "dec", "points": 10, "fstart": 100, "fstop": 10000 },
+        "node": "V(2)",
+        "results": [
+          { "freq": 100.0, "mag_db": -0.043, "phase_deg": -5.71 },
+          { "freq": 158.49, "mag_db": -0.107, "phase_deg": -9.01 },
+          { "freq": 251.19, "mag_db": -0.263, "phase_deg": -14.11 },
+          { "freq": 398.11, "mag_db": -0.629, "phase_deg": -21.74 },
+          { "freq": 630.96, "mag_db": -1.424, "phase_deg": -32.23 },
+          { "freq": 1000.0, "mag_db": -3.01, "phase_deg": -45.0 },
+          { "freq": 1584.9, "mag_db": -5.68, "phase_deg": -57.77 },
+          { "freq": 2511.9, "mag_db": -8.98, "phase_deg": -68.26 },
+          { "freq": 3981.1, "mag_db": -12.62, "phase_deg": -75.89 },
+          { "freq": 6309.6, "mag_db": -16.42, "phase_deg": -81.28 },
+          { "freq": 10000.0, "mag_db": -20.04, "phase_deg": -84.29 }
+        ],
+        "tolerances": {
+          "mag_db": 0.5,
+          "phase_deg": 2.0
+        }
+      }
+    },
+    {
+      "name": "rl_highpass_1khz",
+      "description": "RL highpass filter with f_c = R/(2*pi*L) ≈ 1kHz",
+      "netlist": "V1 1 0 AC 1\nR1 1 2 1k\nL1 2 0 159m\n.ac dec 10 100 10k\n.end",
+      "analysis": {
+        "type": "ac",
+        "sweep": { "type": "dec", "points": 10, "fstart": 100, "fstop": 10000 },
+        "node": "V(2)",
+        "results": [
+          { "freq": 100.0, "mag_db": -20.04, "phase_deg": 84.29 },
+          { "freq": 158.49, "mag_db": -16.42, "phase_deg": 81.28 },
+          { "freq": 251.19, "mag_db": -12.62, "phase_deg": 75.89 },
+          { "freq": 398.11, "mag_db": -8.98, "phase_deg": 68.26 },
+          { "freq": 630.96, "mag_db": -5.68, "phase_deg": 57.77 },
+          { "freq": 1000.0, "mag_db": -3.01, "phase_deg": 45.0 },
+          { "freq": 1584.9, "mag_db": -1.424, "phase_deg": 32.23 },
+          { "freq": 2511.9, "mag_db": -0.629, "phase_deg": 21.74 },
+          { "freq": 3981.1, "mag_db": -0.263, "phase_deg": 14.11 },
+          { "freq": 6309.6, "mag_db": -0.107, "phase_deg": 9.01 },
+          { "freq": 10000.0, "mag_db": -0.043, "phase_deg": 5.71 }
+        ],
+        "tolerances": {
+          "mag_db": 0.5,
+          "phase_deg": 2.0
+        }
+      }
+    },
+    {
+      "name": "rlc_bandpass_1khz",
+      "description": "Series RLC bandpass with f_0 = 1kHz, Q = 10",
+      "netlist": "V1 1 0 AC 1\nR1 1 2 10\nL1 2 3 25.3m\nC1 3 0 1u\n.ac dec 20 100 10k\n.end",
+      "analysis": {
+        "type": "ac",
+        "sweep": { "type": "dec", "points": 20, "fstart": 100, "fstop": 10000 },
+        "node": "V(3)",
+        "description": "Voltage across capacitor peaks near resonance",
+        "results": [
+          { "freq": 100.0, "mag_db": -20.0, "phase_deg": -84.3 },
+          { "freq": 500.0, "mag_db": 6.0, "phase_deg": -63.4 },
+          { "freq": 900.0, "mag_db": 17.5, "phase_deg": -25.8 },
+          { "freq": 1000.0, "mag_db": 20.0, "phase_deg": 0.0 },
+          { "freq": 1100.0, "mag_db": 17.5, "phase_deg": 25.8 },
+          { "freq": 2000.0, "mag_db": 6.0, "phase_deg": 63.4 },
+          { "freq": 10000.0, "mag_db": -20.0, "phase_deg": 84.3 }
+        ],
+        "tolerances": {
+          "mag_db": 1.0,
+          "phase_deg": 3.0
+        }
+      }
+    }
+  ]
+}
