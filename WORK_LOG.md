@@ -657,3 +657,39 @@ Integrated solver dispatch configuration into all analysis paths, enabling autom
 - ⏳ 9c: Batched device evaluation on GPU
 - ⏳ 9d: Large-circuit sparse solve
 - ⏳ 9e: Post-processing on GPU
+
+### Phase 7: AC Linearization of Nonlinear Devices
+
+Added automatic linearization of nonlinear devices (diodes, MOSFETs) for AC small-signal analysis. AC analysis now computes the DC operating point first, then extracts small-signal parameters for frequency-domain simulation.
+
+**New AcDeviceInfo variants (`spicier-core/src/netlist.rs`):**
+- `AcDeviceInfo::Diode { node_pos, node_neg, gd }` — small-signal conductance
+- `AcDeviceInfo::Mosfet { drain, gate, source, gds, gm }` — output conductance + transconductance
+
+**New Stamper trait method:**
+- `ac_info_at(&self, solution: &DVector<f64>) -> AcDeviceInfo`
+  - Computes AC parameters from DC operating point
+  - Default implementation falls back to `ac_info()` for linear devices
+  - Diode: extracts gd = dId/dVd at Vd from DC solution
+  - MOSFET: extracts gds = dIds/dVds and gm = dIds/dVgs at (Vgs, Vds)
+
+**CLI integration (`spicier-cli/src/main.rs`):**
+- `NetlistAcStamper` now takes optional `dc_solution` reference
+- When netlist has nonlinear devices, AC analysis first runs DC OP
+- DC solution passed to `ac_info_at()` for each device
+- Diode stamped as conductance gd between anode/cathode
+- MOSFET stamped as gds + gm VCCS (small-signal model)
+
+**New example circuits:**
+- `examples/diode_ac.sp` — Diode small-signal analysis
+- `examples/mosfet_amp_ac.sp` — MOSFET common-source amplifier
+- `examples/mosfet_amp_op.sp` — MOSFET DC operating point
+
+**Tests:** 244 total passing (2 new tests)
+- `test_ac_info_at_forward_bias` — Diode linearization at 0.7V
+- `test_ac_info_at_saturation` — MOSFET linearization in saturation
+
+**Verified behavior:**
+- Diode at 0.74V DC shows ~6 ohm small-signal resistance
+- MOSFET amplifier shows inverting gain (180° phase shift) as expected
+- Both automatically linearized from DC operating point

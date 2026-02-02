@@ -1,0 +1,7 @@
+MOSFET Common-Source Amplifier DC OP
+VDD 3 0 DC 10
+VIN 1 0 DC 2
+RD 3 2 5k
+M1 2 1 0 0 NMOS
+.OP
+.END

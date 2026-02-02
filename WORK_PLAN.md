@@ -247,7 +247,11 @@ Phased roadmap for building Spicier, a high-performance SPICE circuit simulator 
   - Inductor: jωL impedance with branch current
   - VCCS stamp for gm (transconductance)
   - [x] Controlled source AC stamps (VCVS, VCCS, CCCS, CCVS)
-  - [ ] Nonlinear devices: automatic linearization from DC point
+  - [x] Nonlinear devices: automatic linearization from DC point
+    - `ac_info_at(solution)` method computes small-signal params from DC
+    - Diode: gd conductance at operating point
+    - MOSFET: gds (output conductance) + gm (transconductance) VCCS
+    - AC analysis automatically runs DC OP first when nonlinear devices present
 - [x] AC sweep (.AC)
   - Linear, decade, octave sweep types
   - Frequency vector generation

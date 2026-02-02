@@ -75,7 +75,24 @@ pub enum AcDeviceInfo {
         branch_idx: usize,
         gain: f64,
     },
-    /// Unknown or nonlinear device (skip in AC).
+    /// Diode: linearized as small-signal conductance gd at operating point.
+    Diode {
+        node_pos: Option<usize>,
+        node_neg: Option<usize>,
+        /// Small-signal conductance gd = dId/dVd at DC operating point.
+        gd: f64,
+    },
+    /// MOSFET: linearized as gds + gm*Vgs at operating point.
+    Mosfet {
+        drain: Option<usize>,
+        gate: Option<usize>,
+        source: Option<usize>,
+        /// Output conductance gds = dIds/dVds at DC operating point.
+        gds: f64,
+        /// Transconductance gm = dIds/dVgs at DC operating point.
+        gm: f64,
+    },
+    /// Unknown device or no AC contribution.
     None,
 }
 
@@ -120,8 +137,21 @@ pub trait Stamper: std::fmt::Debug + Send + Sync {
     }
 
     /// Provide AC analysis information for this device.
+    ///
+    /// For linear devices, this returns fixed parameters.
+    /// For nonlinear devices, use `ac_info_at()` with the DC solution.
     fn ac_info(&self) -> AcDeviceInfo {
         AcDeviceInfo::None
+    }
+
+    /// Provide AC analysis information at a given DC operating point.
+    ///
+    /// For nonlinear devices (diodes, MOSFETs), this extracts the
+    /// small-signal parameters (gd, gm, gds) from the DC solution.
+    /// Linear devices can use the default implementation which just
+    /// calls `ac_info()`.
+    fn ac_info_at(&self, _solution: &DVector<f64>) -> AcDeviceInfo {
+        self.ac_info()
     }
 
     /// Whether this device is nonlinear (requires Newton-Raphson).

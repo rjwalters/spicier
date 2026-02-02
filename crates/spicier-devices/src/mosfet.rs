@@ -2,7 +2,7 @@
 
 use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
-use spicier_core::netlist::TransientDeviceInfo;
+use spicier_core::netlist::{AcDeviceInfo, TransientDeviceInfo};
 use spicier_core::{Element, NodeId, Stamper};
 
 use crate::stamp::Stamp;
@@ -277,6 +277,32 @@ impl Stamper for Mosfet {
         self.stamp_linearized_at(mna, vgs, vds);
     }
 
+    fn ac_info_at(&self, solution: &DVector<f64>) -> AcDeviceInfo {
+        // Extract operating point voltages from DC solution
+        let vg = node_to_index(self.node_gate)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vd = node_to_index(self.node_drain)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vs = node_to_index(self.node_source)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vgs = vg - vs;
+        let vds = vd - vs;
+
+        // Get small-signal parameters at operating point
+        let (_ids, gds, gm, _region) = self.evaluate(vgs, vds);
+
+        AcDeviceInfo::Mosfet {
+            drain: node_to_index(self.node_drain),
+            gate: node_to_index(self.node_gate),
+            source: node_to_index(self.node_source),
+            gds,
+            gm,
+        }
+    }
+
     fn transient_info(&self) -> TransientDeviceInfo {
         TransientDeviceInfo::None
     }
@@ -365,5 +391,29 @@ mod tests {
             "beta = {} (expected 2e-4)",
             beta
         );
+    }
+
+    #[test]
+    fn test_ac_info_at_saturation() {
+        // NMOS with drain=node1, gate=node2, source=ground
+        let m = Mosfet::nmos("M1", NodeId::new(1), NodeId::new(2), NodeId::GROUND);
+
+        // DC solution: Vd=5V, Vg=2V, Vs=0V → Vgs=2V, Vds=5V → saturation
+        let solution = DVector::from_vec(vec![5.0, 2.0]);
+
+        let ac_info = m.ac_info_at(&solution);
+
+        match ac_info {
+            AcDeviceInfo::Mosfet { drain, gate, source, gds, gm } => {
+                assert_eq!(drain, Some(0));
+                assert_eq!(gate, Some(1));
+                assert_eq!(source, None);
+                // In saturation, gm should be significant
+                assert!(gm > 1e-6, "gm should be positive in saturation: {}", gm);
+                // gds may be small (lambda=0 by default)
+                assert!(gds >= 0.0, "gds should be non-negative: {}", gds);
+            }
+            _ => panic!("Expected AcDeviceInfo::Mosfet"),
+        }
     }
 }

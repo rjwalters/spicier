@@ -2,7 +2,7 @@
 
 use nalgebra::DVector;
 use spicier_core::mna::MnaSystem;
-use spicier_core::netlist::TransientDeviceInfo;
+use spicier_core::netlist::{AcDeviceInfo, TransientDeviceInfo};
 use spicier_core::{Element, NodeId, Stamper};
 
 use crate::stamp::Stamp;
@@ -199,6 +199,26 @@ impl Stamper for Diode {
         self.stamp_linearized_at(mna, vd);
     }
 
+    fn ac_info_at(&self, solution: &DVector<f64>) -> AcDeviceInfo {
+        // Extract operating point voltage from DC solution
+        let vp = node_to_index(self.node_pos)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vn = node_to_index(self.node_neg)
+            .map(|i| solution[i])
+            .unwrap_or(0.0);
+        let vd = vp - vn;
+
+        // Get small-signal conductance at operating point
+        let (_id, gd) = self.evaluate(vd);
+
+        AcDeviceInfo::Diode {
+            node_pos: node_to_index(self.node_pos),
+            node_neg: node_to_index(self.node_neg),
+            gd,
+        }
+    }
+
     fn transient_info(&self) -> TransientDeviceInfo {
         TransientDeviceInfo::None
     }
@@ -254,5 +274,25 @@ mod tests {
         let limited = limit_voltage(100.0, nvt);
         assert!(limited < 100.0, "Should be limited: {}", limited);
         assert!(limited > 0.0, "Should be positive: {}", limited);
+    }
+
+    #[test]
+    fn test_ac_info_at_forward_bias() {
+        let d = Diode::new("D1", NodeId::new(1), NodeId::GROUND);
+
+        // DC solution with diode at 0.7V forward bias
+        let solution = DVector::from_vec(vec![0.7]);
+
+        let ac_info = d.ac_info_at(&solution);
+
+        match ac_info {
+            AcDeviceInfo::Diode { node_pos, node_neg, gd } => {
+                assert_eq!(node_pos, Some(0));
+                assert_eq!(node_neg, None);
+                // At 0.7V, gd should be significant
+                assert!(gd > 0.01, "Forward gd should be significant: {}", gd);
+            }
+            _ => panic!("Expected AcDeviceInfo::Diode"),
+        }
     }
 }

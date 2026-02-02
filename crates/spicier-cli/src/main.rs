@@ -325,13 +325,49 @@ fn run_ac_analysis(
     println!("==========================================");
     println!();
 
+    // For nonlinear circuits, first compute DC operating point
+    let dc_solution: Option<DVector<f64>> = if netlist.has_nonlinear_devices() {
+        println!("Computing DC operating point for linearization...");
+
+        let stamper = NetlistNonlinearStamper { netlist };
+        let criteria = ConvergenceCriteria::default();
+        let nr_result = solve_newton_raphson(
+            netlist.num_nodes(),
+            netlist.num_current_vars(),
+            &stamper,
+            &criteria,
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("Newton-Raphson error: {}", e))?;
+
+        if !nr_result.converged {
+            eprintln!(
+                "Warning: DC operating point did not converge after {} iterations",
+                nr_result.iterations
+            );
+        } else {
+            println!(
+                "DC operating point converged in {} iterations.",
+                nr_result.iterations
+            );
+        }
+        println!();
+
+        Some(nr_result.solution)
+    } else {
+        None
+    };
+
     let solver_sweep_type = match sweep_type {
         AcSweepType::Dec => SolverAcSweepType::Decade,
         AcSweepType::Oct => SolverAcSweepType::Octave,
         AcSweepType::Lin => SolverAcSweepType::Linear,
     };
 
-    let stamper = NetlistAcStamper { netlist };
+    let stamper = NetlistAcStamper {
+        netlist,
+        dc_solution: dc_solution.as_ref(),
+    };
 
     let params = AcParams {
         fstart,
@@ -441,14 +477,23 @@ impl NonlinearStamper for NetlistNonlinearStamper<'_> {
 ///
 /// Stamps resistors as real conductance, capacitors as jωC admittance,
 /// inductors with jωL impedance, and the first voltage source as AC stimulus.
+/// When a DC solution is provided, nonlinear devices are linearized at their
+/// operating point.
 struct NetlistAcStamper<'a> {
     netlist: &'a spicier_core::Netlist,
+    /// DC solution for linearizing nonlinear devices.
+    dc_solution: Option<&'a nalgebra::DVector<f64>>,
 }
 
 impl AcStamper for NetlistAcStamper<'_> {
     fn stamp_ac(&self, mna: &mut ComplexMna, omega: f64) {
         for device in self.netlist.devices() {
-            match device.ac_info() {
+            // Use ac_info_at() if DC solution is available, otherwise ac_info()
+            let ac_info = match self.dc_solution {
+                Some(sol) => device.ac_info_at(sol),
+                None => device.ac_info(),
+            };
+            match ac_info {
                 AcDeviceInfo::Resistor {
                     node_pos,
                     node_neg,
@@ -584,6 +629,44 @@ impl AcStamper for NetlistAcStamper<'_> {
                         mna.add_element(br, i, Complex::new(-1.0, 0.0));
                     }
                     mna.add_element(br, ctrl_br, Complex::new(-gain, 0.0));
+                }
+                AcDeviceInfo::Diode {
+                    node_pos,
+                    node_neg,
+                    gd,
+                } => {
+                    // Diode is a simple conductance at the operating point
+                    mna.stamp_conductance(node_pos, node_neg, gd);
+                }
+                AcDeviceInfo::Mosfet {
+                    drain,
+                    gate,
+                    source,
+                    gds,
+                    gm,
+                } => {
+                    // MOSFET small-signal model:
+                    // 1. gds conductance between drain and source
+                    mna.stamp_conductance(drain, source, gds);
+
+                    // 2. gm transconductance: current gm*Vgs from drain to source
+                    //    controlled by gate-source voltage
+                    if let Some(d) = drain {
+                        if let Some(g) = gate {
+                            mna.add_element(d, g, Complex::new(gm, 0.0));
+                        }
+                        if let Some(s) = source {
+                            mna.add_element(d, s, Complex::new(-gm, 0.0));
+                        }
+                    }
+                    if let Some(s) = source {
+                        if let Some(g) = gate {
+                            mna.add_element(s, g, Complex::new(-gm, 0.0));
+                        }
+                        if let Some(s2) = source {
+                            mna.add_element(s, s2, Complex::new(gm, 0.0));
+                        }
+                    }
                 }
                 AcDeviceInfo::None => {}
             }
