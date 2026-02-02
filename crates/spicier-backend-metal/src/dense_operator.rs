@@ -14,7 +14,7 @@ use wgpu::util::DeviceExt;
 /// GPU-resident representation of a complex number.
 ///
 /// Uses f32 for broad GPU compatibility (most GPUs don't support f64).
-/// Layout matches vec2<f32> in WGSL.
+/// Layout matches `vec2<f32>` in WGSL.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct GpuComplex {

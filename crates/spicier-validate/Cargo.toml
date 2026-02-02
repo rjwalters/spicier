@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Cross-simulator validation tool comparing spicier with ngspice"
+keywords = ["spice", "validation", "ngspice", "testing", "circuit"]
+categories = ["development-tools::testing", "science"]
 
 [dependencies]
 # Internal crates

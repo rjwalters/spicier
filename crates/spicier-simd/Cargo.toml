@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+keywords = ["simd", "avx2", "avx512", "numerical", "performance"]
+categories = ["mathematics", "science"]
 
 [dependencies]
 num-complex.workspace = true

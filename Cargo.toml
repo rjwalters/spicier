@@ -21,14 +21,14 @@ repository = "https://github.com/rwalters/spicier"
 
 [workspace.dependencies]
 # Internal crates
-spicier-core = { path = "crates/spicier-core" }
-spicier-simd = { path = "crates/spicier-simd" }
-spicier-solver = { path = "crates/spicier-solver" }
-spicier-devices = { path = "crates/spicier-devices" }
-spicier-parser = { path = "crates/spicier-parser" }
-spicier-backend-cpu = { path = "crates/spicier-backend-cpu" }
-spicier-backend-cuda = { path = "crates/spicier-backend-cuda" }
-spicier-backend-metal = { path = "crates/spicier-backend-metal" }
+spicier-core = { path = "crates/spicier-core", version = "0.1.0" }
+spicier-simd = { path = "crates/spicier-simd", version = "0.1.0" }
+spicier-solver = { path = "crates/spicier-solver", version = "0.1.0" }
+spicier-devices = { path = "crates/spicier-devices", version = "0.1.0" }
+spicier-parser = { path = "crates/spicier-parser", version = "0.1.0" }
+spicier-backend-cpu = { path = "crates/spicier-backend-cpu", version = "0.1.0" }
+spicier-backend-cuda = { path = "crates/spicier-backend-cuda", version = "0.1.0" }
+spicier-backend-metal = { path = "crates/spicier-backend-metal", version = "0.1.0" }
 
 # Error handling
 thiserror = "2"

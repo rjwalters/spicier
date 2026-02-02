@@ -114,8 +114,8 @@ impl ComplexMna {
     /// Stamp a complex admittance between two nodes.
     ///
     /// For a two-terminal element with admittance Y between nodes i and j:
-    ///   matrix[i,i] += Y,  matrix[j,j] += Y
-    ///   matrix[i,j] -= Y,  matrix[j,i] -= Y
+    ///   matrix\[i,i\] += Y,  matrix\[j,j\] += Y
+    ///   matrix\[i,j\] -= Y,  matrix\[j,i\] -= Y
     pub fn stamp_admittance(
         &mut self,
         node_i: Option<usize>,

@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+keywords = ["spice", "netlist", "parser", "circuit", "eda"]
+categories = ["parser-implementations", "science"]
 
 [dependencies]
 spicier-core.workspace = true

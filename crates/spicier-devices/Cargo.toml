@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+keywords = ["spice", "circuit", "devices", "mosfet", "diode"]
+categories = ["science", "simulation"]
 
 [dependencies]
 spicier-core.workspace = true

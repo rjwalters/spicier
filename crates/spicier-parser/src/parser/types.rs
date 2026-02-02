@@ -48,7 +48,7 @@ pub enum AnalysisCommand {
         fstart: f64,
         fstop: f64,
     },
-    /// Transient analysis (.TRAN tstep tstop [tstart] [tmax] [UIC]).
+    /// Transient analysis (.TRAN tstep tstop \[tstart\] \[tmax\] \[UIC\]).
     Tran {
         tstep: f64,
         tstop: f64,

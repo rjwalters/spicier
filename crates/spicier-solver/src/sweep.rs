@@ -440,7 +440,7 @@ mod tests {
 
         impl SweepStamperFactory for DividerFactory {
             fn create_stamper(&self, parameters: &[f64]) -> Arc<dyn SweepStamper> {
-                let r1 = parameters.get(0).copied().unwrap_or(1000.0);
+                let r1 = parameters.first().copied().unwrap_or(1000.0);
                 Arc::new(DividerStamper {
                     r1,
                     r2: self.r2_nominal,

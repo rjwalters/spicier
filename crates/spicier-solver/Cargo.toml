@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+keywords = ["spice", "circuit", "solver", "newton-raphson", "gmres"]
+categories = ["science", "simulation", "mathematics"]
 
 [dependencies]
 spicier-core.workspace = true

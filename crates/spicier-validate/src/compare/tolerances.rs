@@ -66,28 +66,20 @@ impl Default for TransientTolerances {
 }
 
 /// Complete comparison configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ComparisonConfig {
     /// DC analysis tolerances.
+    #[serde(default)]
     pub dc: DcTolerances,
     /// AC analysis tolerances.
+    #[serde(default)]
     pub ac: AcTolerances,
     /// Transient analysis tolerances.
+    #[serde(default)]
     pub transient: TransientTolerances,
     /// Specific variables to compare (None = compare all).
     #[serde(default)]
     pub variables: Option<Vec<String>>,
-}
-
-impl Default for ComparisonConfig {
-    fn default() -> Self {
-        Self {
-            dc: DcTolerances::default(),
-            ac: AcTolerances::default(),
-            transient: TransientTolerances::default(),
-            variables: None,
-        }
-    }
 }
 
 impl ComparisonConfig {

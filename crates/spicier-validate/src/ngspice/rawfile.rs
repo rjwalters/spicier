@@ -141,10 +141,8 @@ fn parse_ascii_data(data: &str, header: &RawfileHeader) -> Result<RawfileData> {
                         current_point_real.push(re);
                         current_point_imag.push(im);
                     }
-                } else {
-                    if let Ok(v) = parts[1].parse::<f64>() {
-                        current_point_real.push(v);
-                    }
+                } else if let Ok(v) = parts[1].parse::<f64>() {
+                    current_point_real.push(v);
                 }
             }
             expecting_index = false;

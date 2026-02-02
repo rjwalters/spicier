@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+keywords = ["spice", "circuit", "simulator", "cli", "eda"]
+categories = ["command-line-utilities", "simulation", "science"]
 
 [features]
 default = []
