@@ -763,6 +763,420 @@ fn eval_diode(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
+// ============================================================================
+// BJT Evaluation
+// ============================================================================
+
+/// BJT model parameters for GPU evaluation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct GpuBjtParams {
+    /// Saturation current (A).
+    pub is: f32,
+    /// Forward current gain (beta_F).
+    pub bf: f32,
+    /// Reverse current gain (beta_R).
+    pub br: f32,
+    /// Forward emission coefficient.
+    pub nf: f32,
+    /// Reverse emission coefficient.
+    pub nr: f32,
+    /// Forward Early voltage (V). Use large value (1e6) for no Early effect.
+    pub vaf: f32,
+    /// Thermal voltage (V).
+    pub vt: f32,
+    /// +1 for NPN, -1 for PNP.
+    pub polarity: f32,
+}
+
+impl Default for GpuBjtParams {
+    fn default() -> Self {
+        Self {
+            is: 1e-14,
+            bf: 100.0,
+            br: 1.0,
+            nf: 1.0,
+            nr: 1.0,
+            vaf: 1e6, // Large value = no Early effect
+            vt: 0.02585,
+            polarity: 1.0, // NPN
+        }
+    }
+}
+
+/// Results from BJT evaluation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct BjtEvalResult {
+    /// Collector current (A).
+    pub ic: f32,
+    /// Base current (A).
+    pub ib: f32,
+    /// Transconductance dIc/dVbe (S).
+    pub gm: f32,
+    /// Input conductance dIb/dVbe (S).
+    pub gpi: f32,
+    /// Output conductance dIc/dVce (S).
+    pub go: f32,
+    /// Padding for alignment.
+    pub _pad: [f32; 3],
+}
+
+/// GPU kernel for batched BJT evaluation.
+pub struct GpuBjtEvaluator {
+    ctx: Arc<WgpuContext>,
+    pipeline: wgpu::ComputePipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl GpuBjtEvaluator {
+    /// Create a new BJT evaluator.
+    pub fn new(ctx: Arc<WgpuContext>) -> Result<Self> {
+        let shader = ctx.device().create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("BJT Evaluation Shader"),
+            source: wgpu::ShaderSource::Wgsl(BJT_SHADER.into()),
+        });
+
+        let bind_group_layout =
+            ctx.device()
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("BJT Eval Bind Group Layout"),
+                    entries: &[
+                        // Params buffer (uniform)
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Vbe input buffer
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Vce input buffer
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // Output buffer
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+
+        let pipeline_layout =
+            ctx.device()
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("BJT Eval Pipeline Layout"),
+                    bind_group_layouts: &[&bind_group_layout],
+                    push_constant_ranges: &[],
+                });
+
+        let pipeline = ctx
+            .device()
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("BJT Eval Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("eval_bjt"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+        Ok(Self {
+            ctx,
+            pipeline,
+            bind_group_layout,
+        })
+    }
+
+    /// Evaluate BJTs for all devices × all sweep points.
+    ///
+    /// # Arguments
+    /// * `params` - BJT model parameters
+    /// * `vbe` - Base-emitter voltages, length = num_devices × num_sweeps
+    /// * `vce` - Collector-emitter voltages, length = num_devices × num_sweeps
+    ///
+    /// # Returns
+    /// Results array with Ic, Ib, gm, gpi, go for each device × sweep.
+    pub fn evaluate(
+        &self,
+        params: &GpuBjtParams,
+        vbe: &[f32],
+        vce: &[f32],
+    ) -> Result<Vec<BjtEvalResult>> {
+        let count = vbe.len();
+        if vce.len() != count {
+            return Err(WgpuError::InvalidDimension(
+                "vbe and vce must have same length".into(),
+            ));
+        }
+        if count == 0 {
+            return Ok(vec![]);
+        }
+
+        // Create uniform buffer for params
+        let params_buffer = self
+            .ctx
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("BJT Params"),
+                contents: bytemuck::bytes_of(params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+
+        // Create input buffers
+        let vbe_buffer = self
+            .ctx
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vbe Input"),
+                contents: bytemuck::cast_slice(vbe),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let vce_buffer = self
+            .ctx
+            .device()
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vce Input"),
+                contents: bytemuck::cast_slice(vce),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
+        // Create output buffer (32 bytes per result due to padding)
+        let output_size = (count * std::mem::size_of::<BjtEvalResult>()) as u64;
+        let output_buffer = self.ctx.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("BJT Output"),
+            size: output_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        // Create staging buffer for readback
+        let staging_buffer = self.ctx.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("BJT Output Staging"),
+            size: output_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create bind group
+        let bind_group = self
+            .ctx
+            .device()
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("BJT Eval Bind Group"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: vbe_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: vce_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: output_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+
+        // Dispatch compute
+        let mut encoder = self
+            .ctx
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("BJT Eval Encoder"),
+            });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("BJT Eval Pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+
+            let workgroups = (count as u32 + 255) / 256;
+            pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+
+        // Copy to staging
+        encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
+
+        self.ctx.queue().submit(std::iter::once(encoder.finish()));
+
+        // Read back results
+        let buffer_slice = staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        self.ctx.device().poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .map_err(|_| WgpuError::Compute("Failed to receive map result".into()))?
+            .map_err(|e| WgpuError::Buffer(format!("Buffer map failed: {:?}", e)))?;
+
+        let data = buffer_slice.get_mapped_range();
+        let results: Vec<BjtEvalResult> = bytemuck::cast_slice(&data).to_vec();
+        drop(data);
+        staging_buffer.unmap();
+
+        Ok(results)
+    }
+
+    /// Evaluate with timing information for benchmarking.
+    pub fn evaluate_timed(
+        &self,
+        params: &GpuBjtParams,
+        vbe: &[f32],
+        vce: &[f32],
+    ) -> Result<(Vec<BjtEvalResult>, std::time::Duration)> {
+        let start = std::time::Instant::now();
+        let results = self.evaluate(params, vbe, vce)?;
+        let elapsed = start.elapsed();
+        Ok((results, elapsed))
+    }
+}
+
+/// WGSL shader for BJT evaluation.
+///
+/// Ebers-Moll model with Early effect. Computes Ic, Ib, gm, gpi, go.
+const BJT_SHADER: &str = r#"
+struct BjtParams {
+    is: f32,        // Saturation current
+    bf: f32,        // Forward beta
+    br: f32,        // Reverse beta
+    nf: f32,        // Forward emission coefficient
+    nr: f32,        // Reverse emission coefficient
+    vaf: f32,       // Forward Early voltage
+    vt: f32,        // Thermal voltage
+    polarity: f32,  // +1 for NPN, -1 for PNP
+}
+
+struct BjtResult {
+    ic: f32,
+    ib: f32,
+    gm: f32,
+    gpi: f32,
+    go: f32,
+    _pad: vec3<f32>,
+}
+
+@group(0) @binding(0) var<uniform> params: BjtParams;
+@group(0) @binding(1) var<storage, read> vbe_in: array<f32>;
+@group(0) @binding(2) var<storage, read> vce_in: array<f32>;
+@group(0) @binding(3) var<storage, read_write> results: array<BjtResult>;
+
+// Voltage limiting to prevent exp() overflow
+fn limit_voltage(v: f32, nvt: f32) -> f32 {
+    let vcrit = nvt * log(nvt / (1e-14 * 1.41421356));
+    if v > vcrit {
+        let arg = (v - vcrit) / nvt;
+        return vcrit + nvt * log(1.0 + arg);
+    }
+    return v;
+}
+
+@compute @workgroup_size(256)
+fn eval_bjt(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    if idx >= arrayLength(&vbe_in) {
+        return;
+    }
+
+    // Apply polarity for PNP
+    let p = params.polarity;
+    let vbe = p * vbe_in[idx];
+    let vce = p * vce_in[idx];
+    let vbc = vbe - vce;
+
+    let nf_vt = params.nf * params.vt;
+    let nr_vt = params.nr * params.vt;
+
+    // Voltage limiting
+    let vbe_lim = limit_voltage(vbe, nf_vt);
+    let vbc_lim = limit_voltage(vbc, nr_vt);
+
+    // Forward and reverse currents (Ebers-Moll)
+    let exp_be = exp(vbe_lim / nf_vt);
+    let exp_bc = exp(vbc_lim / nr_vt);
+
+    let if_current = params.is * (exp_be - 1.0);
+    let ir_current = params.is * (exp_bc - 1.0);
+
+    // Early effect factor
+    var early_factor = 1.0;
+    if vce > 0.0 {
+        early_factor = 1.0 + vce / params.vaf;
+    }
+
+    // Terminal currents
+    let ic = (if_current - ir_current / params.br) * early_factor;
+    let ib = if_current / params.bf + ir_current / params.br;
+
+    // Small-signal parameters
+    // gm = ∂Ic/∂Vbe
+    var gm = 1e-12;
+    if if_current > 1e-20 {
+        gm = (params.is * exp_be / nf_vt) * early_factor;
+    }
+
+    // gpi = gm / BF
+    let gpi = gm / params.bf;
+
+    // go = ∂Ic/∂Vce (Early effect + reverse current sensitivity)
+    var go_early = 0.0;
+    if abs(ic) > 1e-20 {
+        go_early = abs(ic) / params.vaf;
+    }
+    let gbc = params.is * exp_bc / nr_vt;
+    let go_reverse = gbc / params.br * early_factor;
+    let go = max(go_early + go_reverse, 1e-12);
+
+    // Apply polarity to currents
+    results[idx] = BjtResult(
+        p * ic,
+        p * ib,
+        max(gm, 1e-12),
+        max(gpi, 1e-12),
+        go,
+        vec3<f32>(0.0, 0.0, 0.0)
+    );
+}
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1002,6 +1416,126 @@ mod tests {
 
             // Timed run
             let (results, elapsed) = evaluator.evaluate_timed(&params, &vd).unwrap();
+            assert_eq!(results.len(), count);
+
+            let rate = count as f64 / elapsed.as_secs_f64() / 1e6;
+            println!("{:>12} {:>12.2?} {:>12.2}", count, elapsed, rate);
+        }
+    }
+
+    // ========================================================================
+    // BJT Tests
+    // ========================================================================
+
+    #[test]
+    fn test_bjt_cutoff() {
+        let ctx = match create_context() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let evaluator = GpuBjtEvaluator::new(ctx).unwrap();
+        let params = GpuBjtParams::default(); // NPN
+
+        // Both junctions reverse biased: Vbe = -0.5V, Vce = 5V
+        let vbe = vec![-0.5];
+        let vce = vec![5.0];
+        let results = evaluator.evaluate(&params, &vbe, &vce).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ic.abs() < 1e-10, "Ic should be ~0 in cutoff: {}", results[0].ic);
+        assert!(results[0].ib.abs() < 1e-10, "Ib should be ~0 in cutoff: {}", results[0].ib);
+    }
+
+    #[test]
+    fn test_bjt_forward_active() {
+        let ctx = match create_context() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let evaluator = GpuBjtEvaluator::new(ctx).unwrap();
+        let params = GpuBjtParams::default(); // NPN, BF=100
+
+        // Forward active: Vbe = 0.7V, Vce = 5V
+        let vbe = vec![0.7];
+        let vce = vec![5.0];
+        let results = evaluator.evaluate(&params, &vbe, &vce).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ic > 0.0, "Ic should be positive: {}", results[0].ic);
+        assert!(results[0].ib > 0.0, "Ib should be positive: {}", results[0].ib);
+
+        // Check beta relationship: Ic ≈ β * Ib
+        let beta = results[0].ic / results[0].ib;
+        assert!(
+            (beta - 100.0).abs() < 20.0,
+            "β should be ~100: {}",
+            beta
+        );
+
+        // Check gm is positive
+        assert!(results[0].gm > 0.0, "gm should be positive");
+    }
+
+    #[test]
+    fn test_bjt_pnp_polarity() {
+        let ctx = match create_context() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let evaluator = GpuBjtEvaluator::new(ctx).unwrap();
+        let mut params = GpuBjtParams::default();
+        params.polarity = -1.0; // PNP
+
+        // PNP forward active: Vbe = -0.7V, Vce = -5V
+        let vbe = vec![-0.7];
+        let vce = vec![-5.0];
+        let results = evaluator.evaluate(&params, &vbe, &vce).unwrap();
+
+        assert_eq!(results.len(), 1);
+        // PNP currents are negative
+        assert!(results[0].ic < 0.0, "PNP Ic should be negative: {}", results[0].ic);
+        assert!(results[0].ib < 0.0, "PNP Ib should be negative: {}", results[0].ib);
+    }
+
+    #[test]
+    fn test_bjt_batch_performance() {
+        let ctx = match create_context() {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Skipping test: no GPU available");
+                return;
+            }
+        };
+
+        let evaluator = GpuBjtEvaluator::new(ctx).unwrap();
+        let params = GpuBjtParams::default();
+
+        println!("\nGPU BJT Evaluation Scaling:");
+        println!("{:>12} {:>12} {:>12}", "Count", "Time", "M evals/sec");
+        println!("{:-<40}", "");
+
+        // BJT result is larger (32 bytes) so stay under buffer limits
+        for &count in &[10_000, 100_000, 1_000_000, 4_000_000] {
+            let vbe: Vec<f32> = (0..count).map(|i| 0.5 + (i as f32 / count as f32) * 0.3).collect();
+            let vce: Vec<f32> = (0..count).map(|i| 1.0 + (i as f32 / count as f32) * 4.0).collect();
+
+            // Warm-up run
+            let _ = evaluator.evaluate(&params, &vbe, &vce);
+
+            // Timed run
+            let (results, elapsed) = evaluator.evaluate_timed(&params, &vbe, &vce).unwrap();
             assert_eq!(results.len(), count);
 
             let rate = count as f64 / elapsed.as_secs_f64() / 1e6;

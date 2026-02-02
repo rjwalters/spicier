@@ -1,12 +1,25 @@
 //! Expression parsing using recursive descent.
 
+use std::collections::HashSet;
 use std::f64::consts::{E, PI};
 
 use super::ast::{BinaryOp, Expr, UnaryOp};
 
 /// Parse a mathematical expression from a string.
 pub fn parse_expression(input: &str) -> Result<Expr, String> {
-    let mut parser = ExprParser::new(input);
+    let mut parser = ExprParser::new(input, None);
+    parser.parse()
+}
+
+/// Parse a mathematical expression with parameter context.
+///
+/// Identifiers that match a parameter name will be parsed as `Expr::Parameter`
+/// instead of being treated as voltage references.
+pub fn parse_expression_with_params(
+    input: &str,
+    param_names: &HashSet<String>,
+) -> Result<Expr, String> {
+    let mut parser = ExprParser::new(input, Some(param_names));
     parser.parse()
 }
 
@@ -14,11 +27,17 @@ pub fn parse_expression(input: &str) -> Result<Expr, String> {
 struct ExprParser<'a> {
     input: &'a str,
     pos: usize,
+    /// Known parameter names (uppercase).
+    param_names: Option<&'a HashSet<String>>,
 }
 
 impl<'a> ExprParser<'a> {
-    fn new(input: &'a str) -> Self {
-        Self { input, pos: 0 }
+    fn new(input: &'a str, param_names: Option<&'a HashSet<String>>) -> Self {
+        Self {
+            input,
+            pos: 0,
+            param_names,
+        }
     }
 
     fn parse(&mut self) -> Result<Expr, String> {
@@ -267,6 +286,15 @@ impl<'a> ExprParser<'a> {
                 name: ident.to_string(),
                 args,
             });
+        }
+
+        // Check if identifier is a known parameter
+        if let Some(params) = &self.param_names {
+            if params.contains(&ident_upper) {
+                return Ok(Expr::Parameter {
+                    name: ident_upper,
+                });
+            }
         }
 
         // Bare identifier - treat as V(ident) for convenience

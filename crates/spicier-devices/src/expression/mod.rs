@@ -13,7 +13,7 @@ mod parser;
 
 pub use ast::{BinaryOp, Expr, UnaryOp};
 pub use eval::EvalContext;
-pub use parser::parse_expression;
+pub use parser::{parse_expression, parse_expression_with_params};
 
 #[cfg(test)]
 mod tests {

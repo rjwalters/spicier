@@ -18,8 +18,9 @@ pub mod types;
 mod waveforms;
 
 pub use types::{
-    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, OutputVariable, ParseResult,
-    PrintAnalysisType, PrintCommand, RawElementLine, SubcircuitDefinition,
+    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, MeasureAnalysis, MeasureType,
+    Measurement, OutputVariable, ParseResult, PrintAnalysisType, PrintCommand, RawElementLine,
+    StatFunc, SubcircuitDefinition, TriggerType,
 };
 
 use types::SubcircuitDefinition as SubcircuitDef;
@@ -70,6 +71,8 @@ pub(crate) struct Parser<'a> {
     pub(crate) current_subckt: Option<SubcircuitDef>,
     /// Parameters from .PARAM commands (stored as uppercase keys).
     pub(crate) parameters: HashMap<String, f64>,
+    /// Measurement statements from .MEAS commands.
+    pub(crate) measurements: Vec<types::Measurement>,
 }
 
 impl<'a> Parser<'a> {
@@ -93,6 +96,7 @@ impl<'a> Parser<'a> {
             subcircuits: HashMap::new(),
             current_subckt: None,
             parameters: HashMap::new(),
+            measurements: Vec::new(),
         }
     }
 
@@ -161,6 +165,7 @@ impl<'a> Parser<'a> {
             print_commands: self.print_commands,
             subcircuits: self.subcircuits,
             parameters: self.parameters,
+            measurements: self.measurements,
         })
     }
 
@@ -1091,5 +1096,82 @@ Q1 1 2 0 Q2N2222
 
         let netlist = parse(input).unwrap();
         assert_eq!(netlist.num_devices(), 3); // VCC, VB, Q1
+    }
+
+    #[test]
+    fn test_parse_param_expression_add() {
+        let input = r#"Expression Test
+.PARAM R1=1k+500
+R1 1 0 R1
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert!((result.parameters["R1"] - 1500.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_parse_param_expression_nested() {
+        let input = r#"Nested Param Test
+.PARAM R1=1k R2=R1*2
+R1 1 0 R1
+R2 2 0 R2
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert!((result.parameters["R1"] - 1000.0).abs() < 1e-10);
+        assert!((result.parameters["R2"] - 2000.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_parse_param_expression_freq_period() {
+        let input = r#"Freq/Period Test
+.PARAM FREQ=1MEG PERIOD=1/FREQ
+R1 1 0 1k
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert!((result.parameters["FREQ"] - 1e6).abs() < 1e-2);
+        assert!((result.parameters["PERIOD"] - 1e-6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_parse_param_expression_functions() {
+        let input = r#"Function Test
+.PARAM A=1 B=2 C=sqrt(A*A + B*B)
+R1 1 0 C
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        // C should be sqrt(1+4) = sqrt(5) ≈ 2.236
+        assert!((result.parameters["C"] - 2.236067977).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_param_expression_pi() {
+        let input = r#"Pi Test
+.PARAM TWOPI=2*PI
+R1 1 0 1k
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        use std::f64::consts::PI;
+        assert!((result.parameters["TWOPI"] - 2.0 * PI).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_parse_param_expression_power() {
+        let input = r#"Power Test
+.PARAM X=2^10
+R1 1 0 1k
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        assert!((result.parameters["X"] - 1024.0).abs() < 1e-10);
     }
 }

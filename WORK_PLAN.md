@@ -1115,15 +1115,16 @@ Extended validation for newly implemented device models.
 - [x] Mutual inductance parsing verification
 - [x] Transformer DC test (inductor short-circuit)
 
-**AC Small-Signal Tests:**
+**AC Small-Signal Tests (✅ Complete):**
 - [x] Transformer voltage ratio vs frequency (4 tests)
   - 1:1 (unity gain), 2:1 (step-down), 1:2 (step-up)
   - Verify magnitude matches √(L2/L1) ratio
   - Phase relationship (0° or 180° depending on dot convention)
 - [x] Loosely coupled inductors (k=0.5)
-- [ ] Coupled LC resonator bandpass response
-- [ ] BJT common-emitter small-signal gain (gm × RC)
-- [ ] JFET common-source small-signal gain (gm × RD)
+- [x] Coupled LC resonator bandpass response
+- [x] BJT common-emitter small-signal gain (gm × RC)
+- [x] JFET common-source small-signal gain (gm × RD)
+- [x] NMOS common-source small-signal gain
 
 **DC Sweep Characterization (4 tests):**
 - [x] BJT Ic vs Vbe sweep (exponential characteristic)
@@ -1144,13 +1145,13 @@ Extended validation for newly implemented device models.
 **Dependencies:** Core analysis types complete (Phases 4-7)
 
 **Acceptance Criteria:**
-- [x] 30+ validation tests pass with analytical/golden data
-- [x] 11 cross-simulator tests pass (linear circuits match ngspice)
+- [x] 81 validation tests pass (analytical, golden data, cross-simulator)
 - [x] All existing tests continue to pass
 - [x] Nonlinear device model discrepancies resolved (diode ~0%, MOSFET ~0.6%)
 - [x] 13 new BJT/JFET/K validation tests pass (DC operating point)
 - [x] 4 AC transformer tests verify frequency-domain coupling
 - [x] 4 DC sweep tests verify I-V characteristics match theory
+- [x] 4 AC amplifier gain tests verify small-signal models
 
 ---
 

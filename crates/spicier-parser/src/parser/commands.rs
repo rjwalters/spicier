@@ -12,8 +12,9 @@ use crate::error::{Error, Result};
 use crate::lexer::Token;
 
 use super::types::{
-    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, OutputVariable,
-    PrintAnalysisType, PrintCommand, SubcircuitDefinition,
+    AcSweepType, AnalysisCommand, DcSweepSpec, InitialCondition, MeasureAnalysis, MeasureType,
+    Measurement, OutputVariable, PrintAnalysisType, PrintCommand, StatFunc, SubcircuitDefinition,
+    TriggerType,
 };
 use super::{ModelDefinition, Parser};
 
@@ -59,8 +60,7 @@ impl<'a> Parser<'a> {
                 self.skip_to_eol();
             }
             "MEAS" | "MEASURE" => {
-                // TODO: Phase 12b - .MEASURE parsing not yet implemented
-                self.skip_to_eol();
+                self.parse_meas_command(line)?;
             }
             _ => {
                 // Unknown command - skip to EOL
@@ -789,5 +789,334 @@ impl<'a> Parser<'a> {
         } else {
             false
         }
+    }
+
+    /// Parse .MEAS/.MEASURE command.
+    ///
+    /// Syntax examples:
+    /// - `.MEAS TRAN delay TRIG V(in) VAL=0.5 RISE=1 TARG V(out) VAL=0.5 RISE=1`
+    /// - `.MEAS TRAN vmax MAX V(out)`
+    /// - `.MEAS TRAN vavg AVG V(out) FROM=0 TO=10u`
+    /// - `.MEAS DC gain FIND V(out) AT=2.5`
+    fn parse_meas_command(&mut self, line: usize) -> Result<()> {
+        // Parse analysis type: TRAN, DC, AC
+        let analysis = match self.peek() {
+            Token::Name(n) => {
+                let a = match n.to_uppercase().as_str() {
+                    "TRAN" => MeasureAnalysis::Tran,
+                    "DC" => MeasureAnalysis::Dc,
+                    "AC" => MeasureAnalysis::Ac,
+                    other => {
+                        return Err(Error::ParseError {
+                            line,
+                            message: format!(
+                                ".MEAS: unknown analysis type '{}' (expected TRAN, DC, AC)",
+                                other
+                            ),
+                        });
+                    }
+                };
+                self.advance();
+                a
+            }
+            _ => {
+                return Err(Error::ParseError {
+                    line,
+                    message: ".MEAS: expected analysis type (TRAN, DC, AC)".to_string(),
+                });
+            }
+        };
+
+        // Parse measurement name
+        let name = self.expect_name(line)?;
+
+        // Parse measurement type based on first keyword
+        let measure_type = self.parse_measure_type(line)?;
+
+        self.measurements.push(Measurement {
+            name,
+            analysis,
+            measure_type,
+        });
+
+        self.skip_to_eol();
+        Ok(())
+    }
+
+    /// Parse the measure type and parameters.
+    fn parse_measure_type(&mut self, line: usize) -> Result<MeasureType> {
+        let keyword = match self.peek() {
+            Token::Name(n) => {
+                let k = n.to_uppercase();
+                self.advance();
+                k
+            }
+            _ => {
+                return Err(Error::ParseError {
+                    line,
+                    message: ".MEAS: expected measurement keyword".to_string(),
+                });
+            }
+        };
+
+        match keyword.as_str() {
+            "TRIG" => self.parse_trig_targ(line),
+            "FIND" => self.parse_find(line),
+            "AVG" => self.parse_statistic(StatFunc::Avg, line),
+            "RMS" => self.parse_statistic(StatFunc::Rms, line),
+            "MIN" => self.parse_statistic(StatFunc::Min, line),
+            "MAX" => self.parse_statistic(StatFunc::Max, line),
+            "PP" => self.parse_statistic(StatFunc::Pp, line),
+            "INTEG" => self.parse_statistic(StatFunc::Integ, line),
+            other => Err(Error::ParseError {
+                line,
+                message: format!(
+                    ".MEAS: unknown measurement type '{}' (expected TRIG, FIND, AVG, RMS, MIN, MAX, PP, INTEG)",
+                    other
+                ),
+            }),
+        }
+    }
+
+    /// Parse TRIG...TARG measurement.
+    fn parse_trig_targ(&mut self, line: usize) -> Result<MeasureType> {
+        let trig_expr = self.collect_meas_expression()?;
+        let (trig_val, trig_type) = self.parse_val_and_trigger(line)?;
+
+        match self.peek() {
+            Token::Name(n) if n.to_uppercase() == "TARG" => {
+                self.advance();
+            }
+            _ => {
+                return Err(Error::ParseError {
+                    line,
+                    message: ".MEAS: expected TARG after TRIG specification".to_string(),
+                });
+            }
+        }
+
+        let targ_expr = self.collect_meas_expression()?;
+        let (targ_val, targ_type) = self.parse_val_and_trigger(line)?;
+
+        Ok(MeasureType::TrigTarg {
+            trig_expr,
+            trig_val,
+            trig_type,
+            targ_expr,
+            targ_val,
+            targ_type,
+        })
+    }
+
+    /// Parse FIND measurement (FIND...WHEN or FIND...AT).
+    fn parse_find(&mut self, line: usize) -> Result<MeasureType> {
+        let find_expr = self.collect_meas_expression()?;
+
+        match self.peek() {
+            Token::Name(n) => {
+                let kw = n.to_uppercase();
+                match kw.as_str() {
+                    "WHEN" => {
+                        self.advance();
+                        let when_expr = self.collect_meas_expression()?;
+                        let (when_val, when_type) = self.parse_val_and_trigger(line)?;
+                        Ok(MeasureType::FindWhen {
+                            find_expr,
+                            when_expr,
+                            when_val,
+                            when_type,
+                        })
+                    }
+                    "AT" => {
+                        self.advance();
+                        if matches!(self.peek(), Token::Equals) {
+                            self.advance();
+                        }
+                        let at_value = self.expect_value(line)?;
+                        Ok(MeasureType::FindAt {
+                            find_expr,
+                            at_value,
+                        })
+                    }
+                    _ => Err(Error::ParseError {
+                        line,
+                        message: ".MEAS FIND: expected WHEN or AT".to_string(),
+                    }),
+                }
+            }
+            _ => Err(Error::ParseError {
+                line,
+                message: ".MEAS FIND: expected WHEN or AT".to_string(),
+            }),
+        }
+    }
+
+    /// Parse statistic measurement (AVG, RMS, MIN, MAX, PP, INTEG).
+    fn parse_statistic(&mut self, func: StatFunc, line: usize) -> Result<MeasureType> {
+        let expr = self.collect_meas_expression()?;
+
+        let mut from = None;
+        let mut to = None;
+
+        loop {
+            match self.peek() {
+                Token::Eol | Token::Eof => break,
+                Token::Name(n) => {
+                    let kw = n.to_uppercase();
+                    match kw.as_str() {
+                        "FROM" => {
+                            self.advance();
+                            if matches!(self.peek(), Token::Equals) {
+                                self.advance();
+                            }
+                            from = Some(self.expect_value(line)?);
+                        }
+                        "TO" => {
+                            self.advance();
+                            if matches!(self.peek(), Token::Equals) {
+                                self.advance();
+                            }
+                            to = Some(self.expect_value(line)?);
+                        }
+                        _ => {
+                            self.advance();
+                        }
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(MeasureType::Statistic {
+            func,
+            expr,
+            from,
+            to,
+        })
+    }
+
+    /// Collect expression tokens for .MEAS until hitting a keyword.
+    fn collect_meas_expression(&mut self) -> Result<String> {
+        let mut tokens = Vec::new();
+        let mut paren_depth = 0;
+
+        loop {
+            match self.peek() {
+                Token::Eol | Token::Eof => break,
+                Token::LParen => {
+                    paren_depth += 1;
+                    tokens.push("(".to_string());
+                    self.advance();
+                }
+                Token::RParen => {
+                    if paren_depth == 0 {
+                        break;
+                    }
+                    paren_depth -= 1;
+                    tokens.push(")".to_string());
+                    self.advance();
+                }
+                Token::Name(n) if paren_depth == 0 => {
+                    let upper = n.to_uppercase();
+                    if matches!(
+                        upper.as_str(),
+                        "VAL" | "RISE" | "FALL" | "CROSS" | "TARG" | "WHEN" | "AT" | "FROM" | "TO"
+                    ) {
+                        break;
+                    }
+                    tokens.push(n.clone());
+                    self.advance();
+                }
+                Token::Name(n) => {
+                    tokens.push(n.clone());
+                    self.advance();
+                }
+                Token::Value(v) => {
+                    tokens.push(v.clone());
+                    self.advance();
+                }
+                Token::Comma => {
+                    tokens.push(",".to_string());
+                    self.advance();
+                }
+                Token::Star => {
+                    tokens.push("*".to_string());
+                    self.advance();
+                }
+                Token::Slash => {
+                    tokens.push("/".to_string());
+                    self.advance();
+                }
+                Token::Caret => {
+                    tokens.push("^".to_string());
+                    self.advance();
+                }
+                Token::Equals if paren_depth == 0 => break,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(tokens.join(""))
+    }
+
+    /// Parse VAL=value and optional RISE=n/FALL=n/CROSS=n.
+    fn parse_val_and_trigger(&mut self, line: usize) -> Result<(f64, TriggerType)> {
+        let mut val = 0.0;
+        let mut trigger = TriggerType::default();
+
+        loop {
+            match self.peek() {
+                Token::Eol | Token::Eof => break,
+                Token::Name(n) => {
+                    let kw = n.to_uppercase();
+                    match kw.as_str() {
+                        "VAL" => {
+                            self.advance();
+                            if matches!(self.peek(), Token::Equals) {
+                                self.advance();
+                            }
+                            val = self.expect_value(line)?;
+                        }
+                        "RISE" => {
+                            self.advance();
+                            if matches!(self.peek(), Token::Equals) {
+                                self.advance();
+                            }
+                            let n = self.expect_value(line)? as usize;
+                            trigger = TriggerType::Rise(n.max(1));
+                        }
+                        "FALL" => {
+                            self.advance();
+                            if matches!(self.peek(), Token::Equals) {
+                                self.advance();
+                            }
+                            let n = self.expect_value(line)? as usize;
+                            trigger = TriggerType::Fall(n.max(1));
+                        }
+                        "CROSS" => {
+                            self.advance();
+                            if matches!(self.peek(), Token::Equals) {
+                                self.advance();
+                            }
+                            let n = self.expect_value(line)? as usize;
+                            trigger = TriggerType::Cross(n.max(1));
+                        }
+                        "TARG" | "WHEN" | "AT" | "FROM" | "TO" => break,
+                        _ => {
+                            self.advance();
+                        }
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        Ok((val, trigger))
     }
 }

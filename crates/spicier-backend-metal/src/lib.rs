@@ -17,7 +17,7 @@ pub use batched_lu::{
 };
 pub use context::WgpuContext;
 pub use device_eval::{
-    DiodeEvalResult, GpuDiodeEvaluator, GpuDiodeParams, GpuMosfetEvaluator, GpuMosfetParams,
-    MosfetEvalResult,
+    BjtEvalResult, DiodeEvalResult, GpuBjtEvaluator, GpuBjtParams, GpuDiodeEvaluator,
+    GpuDiodeParams, GpuMosfetEvaluator, GpuMosfetParams, MosfetEvalResult,
 };
 pub use error::{Result, WgpuError};

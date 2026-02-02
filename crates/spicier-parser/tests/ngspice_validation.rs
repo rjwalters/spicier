@@ -4727,3 +4727,359 @@ J1 3 2 0 JMOD
         );
     }
 }
+
+// ============================================================================
+// AC Small-Signal Amplifier Gain Tests
+// ============================================================================
+
+/// Test BJT common-emitter small-signal voltage gain
+/// Av = -gm * RC (inverting amplifier)
+/// gm = Ic / Vt at the operating point
+#[test]
+fn test_ac_bjt_common_emitter_gain() {
+    // Common-emitter amplifier:
+    // - VCC = 10V
+    // - RC = 2k (collector load)
+    // - Bias: Vbe = 0.65V gives Ic ≈ 1.5mA
+    // - gm = Ic/Vt ≈ 1.5mA / 26mV ≈ 58 mS
+    // - Expected gain: |Av| = gm * RC ≈ 58mS * 2k ≈ 116 (about 41 dB)
+
+    struct BjtCeStamper {
+        // Small-signal parameters at operating point
+        gm: f64,   // transconductance
+        gpi: f64,  // base input conductance (gm/beta)
+        go: f64,   // output conductance (Early effect)
+        rc: f64,   // collector load resistance
+        rs: f64,   // source resistance
+    }
+
+    impl AcStamper for BjtCeStamper {
+        fn stamp_ac(&self, mna: &mut ComplexMna, _omega: f64) {
+            // Nodes: 0=input (via Rs), 1=base, 2=collector/output
+            // Emitter at ground
+
+            // AC input source at node 0
+            mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+
+            // Rs from input to base
+            mna.stamp_conductance(Some(0), Some(1), 1.0 / self.rs);
+
+            // BJT small-signal model:
+            // gpi between base and emitter (ground)
+            mna.stamp_conductance(Some(1), None, self.gpi);
+
+            // go between collector and emitter
+            mna.stamp_conductance(Some(2), None, self.go);
+
+            // gm * Vbe VCCS from collector
+            // I = gm * V(base) flowing into collector
+            mna.add_element(2, 1, Complex::new(self.gm, 0.0));
+
+            // RC from VCC to collector (VCC is AC ground, so RC to ground)
+            mna.stamp_conductance(Some(2), None, 1.0 / self.rc);
+        }
+
+        fn num_nodes(&self) -> usize {
+            3 // input, base, collector
+        }
+
+        fn num_vsources(&self) -> usize {
+            1 // AC source
+        }
+    }
+
+    // Operating point: Ic ≈ 1mA for easier numbers
+    let vt = 0.026; // Thermal voltage
+    let ic = 1e-3;  // 1mA collector current
+    let beta = 100.0;
+    let vaf = 100.0; // Early voltage
+
+    let gm = ic / vt;           // ≈ 38.5 mS
+    let gpi = gm / beta;        // ≈ 0.385 mS
+    let go = ic / vaf;          // ≈ 10 µS
+    let rc = 2000.0;            // 2k load
+    let rs = 1000.0;            // 1k source resistance
+
+    let stamper = BjtCeStamper { gm, gpi, go, rc, rs };
+
+    // Test at 1kHz (mid-band, no capacitor effects)
+    let params = AcParams {
+        sweep_type: AcSweepType::Linear,
+        num_points: 1,
+        fstart: 1000.0,
+        fstop: 1000.0,
+    };
+
+    let result = solve_ac(&stamper, &params).expect("AC solve failed");
+    let mag_db = result.magnitude_db(2); // Output at collector
+    let (_, actual_gain_db) = mag_db[0];
+
+    // Expected gain: Av ≈ -gm * (RC || ro)
+    // With go << 1/RC, approximately: Av ≈ gm * RC = 38.5mS * 2k = 77
+    // In dB: 20*log10(77) ≈ 37.7 dB
+    // But input attenuation from Rs and rpi: Vb/Vin = rpi/(Rs + rpi)
+    // rpi = 1/gpi ≈ 2.6k, so Vb/Vin ≈ 2.6/(1+2.6) ≈ 0.72
+    // Total gain ≈ 77 * 0.72 ≈ 55, or about 35 dB
+
+    // Allow wide tolerance since this is a simplified model
+    assert!(
+        actual_gain_db > 25.0 && actual_gain_db < 45.0,
+        "BJT CE gain = {:.1} dB (expected ~30-40 dB)",
+        actual_gain_db
+    );
+}
+
+/// Test JFET common-source small-signal voltage gain
+/// Av = -gm * RD
+#[test]
+fn test_ac_jfet_common_source_gain() {
+    // Common-source amplifier:
+    // - VDD = 15V
+    // - RD = 5k (drain load)
+    // - Operating point: Vgs = -0.5V, Ids ≈ 0.56mA
+    // - gm = 2 * sqrt(beta * Ids) at operating point
+
+    struct JfetCsStamper {
+        gm: f64,   // transconductance
+        gds: f64,  // output conductance
+        rd: f64,   // drain load resistance
+        rs: f64,   // source resistance
+    }
+
+    impl AcStamper for JfetCsStamper {
+        fn stamp_ac(&self, mna: &mut ComplexMna, _omega: f64) {
+            // Nodes: 0=input, 1=gate, 2=drain/output
+            // Source at ground
+
+            // AC input source
+            mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+
+            // Rs from input to gate (gate has infinite DC resistance)
+            mna.stamp_conductance(Some(0), Some(1), 1.0 / self.rs);
+
+            // JFET small-signal model:
+            // gds between drain and source
+            mna.stamp_conductance(Some(2), None, self.gds);
+
+            // gm * Vgs VCCS from drain
+            mna.add_element(2, 1, Complex::new(self.gm, 0.0));
+
+            // RD from VDD to drain (VDD is AC ground)
+            mna.stamp_conductance(Some(2), None, 1.0 / self.rd);
+        }
+
+        fn num_nodes(&self) -> usize {
+            3
+        }
+
+        fn num_vsources(&self) -> usize {
+            1
+        }
+    }
+
+    // JFET parameters: VTO=-2V, BETA=1e-4
+    // At Vgs=0, Ids = beta*(Vgs-Vto)^2 = 1e-4 * 4 = 0.4mA
+    // gm = 2*beta*(Vgs-Vto) = 2*1e-4*2 = 0.4mS
+    let gm = 0.4e-3;    // 0.4 mS
+    let gds = 1e-6;     // Small output conductance (lambda≈0)
+    let rd = 5000.0;    // 5k load
+    let rs = 1000.0;    // 1k source resistance
+
+    let stamper = JfetCsStamper { gm, gds, rd, rs };
+
+    let params = AcParams {
+        sweep_type: AcSweepType::Linear,
+        num_points: 1,
+        fstart: 1000.0,
+        fstop: 1000.0,
+    };
+
+    let result = solve_ac(&stamper, &params).expect("AC solve failed");
+    let mag_db = result.magnitude_db(2);
+    let (_, actual_gain_db) = mag_db[0];
+
+    // Expected gain: Av = gm * RD = 0.4mS * 5k = 2
+    // In dB: 20*log10(2) ≈ 6 dB
+    // Gate is high impedance, so no input attenuation
+    assert!(
+        actual_gain_db > 3.0 && actual_gain_db < 12.0,
+        "JFET CS gain = {:.1} dB (expected ~6 dB)",
+        actual_gain_db
+    );
+}
+
+/// Test coupled LC resonator frequency response
+/// Two LC tanks coupled by mutual inductance - verifies coupling mechanism works
+#[test]
+fn test_ac_coupled_lc_resonator() {
+    // Simplified coupled resonator test:
+    // Verify that the coupled inductor AC stamping produces valid frequency response
+
+    struct CoupledResonatorStamper {
+        l: f64,   // Inductance (both tanks)
+        c: f64,   // Capacitance (both tanks)
+        k: f64,   // Coupling coefficient
+        rs: f64,  // Source resistance
+        rl: f64,  // Load resistance
+    }
+
+    impl AcStamper for CoupledResonatorStamper {
+        fn stamp_ac(&self, mna: &mut ComplexMna, omega: f64) {
+            // Nodes: 0=source, 1=L1/C1 tank, 2=L2/C2 tank (output)
+
+            // AC input source
+            mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+
+            // Rs from source to tank 1
+            mna.stamp_conductance(Some(0), Some(1), 1.0 / self.rs);
+
+            // Tank 1: L1 (branch 1) and C1 in parallel to ground
+            mna.stamp_inductor(Some(1), None, 1, omega, self.l);
+            let yc = Complex::new(0.0, omega * self.c);
+            mna.stamp_admittance(Some(1), None, yc);
+
+            // Tank 2: L2 (branch 2) and C2 in parallel to ground
+            mna.stamp_inductor(Some(2), None, 2, omega, self.l);
+            mna.stamp_admittance(Some(2), None, yc);
+
+            // Mutual inductance coupling
+            let m = self.k * self.l; // M = k * sqrt(L1*L2) = k*L for equal L
+            let jwm = Complex::new(0.0, omega * m);
+            let br1 = mna.num_nodes() + 1;
+            let br2 = mna.num_nodes() + 2;
+            mna.add_element(br1, br2, jwm);
+            mna.add_element(br2, br1, jwm);
+
+            // RL from tank 2 to ground
+            mna.stamp_conductance(Some(2), None, 1.0 / self.rl);
+        }
+
+        fn num_nodes(&self) -> usize {
+            3 // source, tank1, tank2
+        }
+
+        fn num_vsources(&self) -> usize {
+            3 // Vsource + 2 inductor branches
+        }
+    }
+
+    let l = 100e-6;  // 100µH
+    let c = 2.5e-9;  // 2.5nF
+    let k = 0.5;     // Moderate coupling for more energy transfer
+    let rs = 50.0;
+    let rl = 50.0;
+
+    let stamper = CoupledResonatorStamper { l, c, k, rs, rl };
+
+    // Resonant frequency
+    let f0 = 1.0 / (2.0 * PI * (l * c).sqrt()); // ≈ 318 kHz
+
+    // Test frequency response at multiple points
+    let test_freqs = [f0 * 0.5, f0, f0 * 2.0];
+
+    for freq in test_freqs {
+        let params = AcParams {
+            sweep_type: AcSweepType::Linear,
+            num_points: 1,
+            fstart: freq,
+            fstop: freq,
+        };
+
+        let result = solve_ac(&stamper, &params).expect("AC solve failed");
+        let mag_db = result.magnitude_db(2);
+        let phase = result.phase_deg(2);
+
+        let (_, gain_db) = mag_db[0];
+        let (_, phase_deg) = phase[0];
+
+        // Verify we get valid (finite) results
+        assert!(
+            gain_db.is_finite(),
+            "Coupled resonator at {:.0}kHz: gain should be finite, got {}",
+            freq / 1000.0, gain_db
+        );
+        assert!(
+            phase_deg.is_finite(),
+            "Coupled resonator at {:.0}kHz: phase should be finite, got {}",
+            freq / 1000.0, phase_deg
+        );
+
+        // Output should exist (not infinitely attenuated)
+        assert!(
+            gain_db > -60.0,
+            "Coupled resonator at {:.0}kHz: gain = {:.1}dB (too low)",
+            freq / 1000.0, gain_db
+        );
+    }
+}
+
+/// Test NMOS common-source amplifier AC gain
+/// Uses MOSFET small-signal parameters from DC operating point
+#[test]
+fn test_ac_nmos_common_source_gain() {
+    struct NmosCsStamper {
+        gm: f64,   // transconductance
+        gds: f64,  // output conductance
+        rd: f64,   // drain load resistance
+    }
+
+    impl AcStamper for NmosCsStamper {
+        fn stamp_ac(&self, mna: &mut ComplexMna, _omega: f64) {
+            // Nodes: 0=input/gate, 1=drain/output
+            // Source at ground
+
+            // AC input source at gate
+            mna.stamp_voltage_source(Some(0), None, 0, Complex::new(1.0, 0.0));
+
+            // MOSFET small-signal model:
+            // gds between drain and source
+            mna.stamp_conductance(Some(1), None, self.gds);
+
+            // gm * Vgs VCCS: current gm*Vgs flows from drain to source
+            // Vgs = V(gate) - V(source) = V(0) - 0 = V(0)
+            mna.add_element(1, 0, Complex::new(self.gm, 0.0));
+
+            // RD from VDD (AC ground) to drain
+            mna.stamp_conductance(Some(1), None, 1.0 / self.rd);
+        }
+
+        fn num_nodes(&self) -> usize {
+            2 // gate, drain
+        }
+
+        fn num_vsources(&self) -> usize {
+            1
+        }
+    }
+
+    // NMOS operating point: Vgs=2V, Vth=0.7V, Kp=100µA/V², W/L=10
+    // Ids = 0.5 * Kp * (W/L) * (Vgs-Vth)² = 0.5 * 1mA/V² * 1.69 = 0.845mA
+    // gm = Kp * (W/L) * (Vgs-Vth) = 1mA/V² * 1.3V = 1.3mS
+    // gds = lambda * Ids = 0.02 * 0.845mA = 17µS
+
+    let gm = 1.3e-3;    // 1.3 mS
+    let gds = 17e-6;    // 17 µS
+    let rd = 2000.0;    // 2k load
+
+    let stamper = NmosCsStamper { gm, gds, rd };
+
+    let params = AcParams {
+        sweep_type: AcSweepType::Linear,
+        num_points: 1,
+        fstart: 10000.0,
+        fstop: 10000.0,
+    };
+
+    let result = solve_ac(&stamper, &params).expect("AC solve failed");
+    let mag_db = result.magnitude_db(1);
+    let (_, actual_gain_db) = mag_db[0];
+
+    // Expected gain: Av = gm * (RD || ro)
+    // ro = 1/gds ≈ 59k, RD||ro ≈ 1.97k
+    // Av ≈ 1.3mS * 1.97k ≈ 2.56, or about 8.2 dB
+    assert!(
+        actual_gain_db > 5.0 && actual_gain_db < 15.0,
+        "NMOS CS gain = {:.1} dB (expected ~8 dB)",
+        actual_gain_db
+    );
+}

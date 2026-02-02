@@ -163,4 +163,118 @@ pub struct ParseResult {
     pub subcircuits: HashMap<String, SubcircuitDefinition>,
     /// Parameters from .PARAM commands (name -> value).
     pub parameters: HashMap<String, f64>,
+    /// Measurement statements from .MEAS commands.
+    pub measurements: Vec<Measurement>,
+}
+
+// ============================================================================
+// .MEASURE types
+// ============================================================================
+
+/// Analysis type for .MEAS command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MeasureAnalysis {
+    /// Transient analysis.
+    Tran,
+    /// DC sweep analysis.
+    Dc,
+    /// AC analysis.
+    Ac,
+}
+
+/// Trigger type for TRIG/TARG measurement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriggerType {
+    /// Rising edge crossing (RISE=n, nth occurrence).
+    Rise(usize),
+    /// Falling edge crossing (FALL=n, nth occurrence).
+    Fall(usize),
+    /// Any crossing (CROSS=n, nth occurrence).
+    Cross(usize),
+}
+
+impl Default for TriggerType {
+    fn default() -> Self {
+        TriggerType::Rise(1)
+    }
+}
+
+/// Statistical function for .MEAS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StatFunc {
+    /// Average value.
+    Avg,
+    /// Root mean square.
+    Rms,
+    /// Minimum value.
+    Min,
+    /// Maximum value.
+    Max,
+    /// Peak-to-peak (max - min).
+    Pp,
+    /// Integral (trapezoidal).
+    Integ,
+}
+
+/// Type of measurement from .MEAS command.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum MeasureType {
+    /// TRIG/TARG: Measure time between two trigger conditions.
+    TrigTarg {
+        /// Expression to trigger on.
+        trig_expr: String,
+        /// Trigger threshold value.
+        trig_val: f64,
+        /// Type of trigger (rise/fall/cross).
+        trig_type: TriggerType,
+        /// Expression to target.
+        targ_expr: String,
+        /// Target threshold value.
+        targ_val: f64,
+        /// Type of target (rise/fall/cross).
+        targ_type: TriggerType,
+    },
+    /// FIND/WHEN: Find value of one expression when another crosses threshold.
+    FindWhen {
+        /// Expression to find the value of.
+        find_expr: String,
+        /// Expression to watch for threshold crossing.
+        when_expr: String,
+        /// Threshold value for when_expr.
+        when_val: f64,
+        /// Type of crossing.
+        when_type: TriggerType,
+    },
+    /// FIND/AT: Find value of expression at a specific point.
+    FindAt {
+        /// Expression to find the value of.
+        find_expr: String,
+        /// The value at which to find (time/dc sweep value/frequency).
+        at_value: f64,
+    },
+    /// Statistical measurement over a range.
+    Statistic {
+        /// Statistical function to apply.
+        func: StatFunc,
+        /// Expression to measure.
+        expr: String,
+        /// Start of measurement range (None = simulation start).
+        from: Option<f64>,
+        /// End of measurement range (None = simulation end).
+        to: Option<f64>,
+    },
+}
+
+/// A .MEAS statement from the netlist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Measurement {
+    /// Name of the measurement result.
+    pub name: String,
+    /// Analysis type this measurement applies to.
+    pub analysis: MeasureAnalysis,
+    /// Type and parameters of the measurement.
+    pub measure_type: MeasureType,
 }
