@@ -53,6 +53,9 @@ pub struct Lexer<'a> {
     line: usize,
     column: usize,
     at_line_start: bool,
+    /// In SPICE, the first line is ALWAYS the title, even if it starts with '*'.
+    /// We only treat '*' as a comment marker after the title line has been processed.
+    title_line_processed: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -64,6 +67,7 @@ impl<'a> Lexer<'a> {
             line: 1,
             column: 1,
             at_line_start: true,
+            title_line_processed: false,
         }
     }
 
@@ -85,14 +89,17 @@ impl<'a> Lexer<'a> {
                 self.line += 1;
                 self.column = 1;
                 self.at_line_start = true;
+                // After the first EOL, the title line has been processed
+                // and subsequent '*' lines are treated as comments
+                self.title_line_processed = true;
                 Ok(SpannedToken {
                     token: Token::Eol,
                     line,
                     column,
                 })
             }
-            Some('*') if self.at_line_start => {
-                // Comment line - skip to end
+            Some('*') if self.at_line_start && self.title_line_processed => {
+                // Comment line - skip to end (but NOT on the first/title line)
                 self.skip_to_eol();
                 self.next_token()
             }

@@ -2046,4 +2046,49 @@ Vgs g 0 DC 2
         let result = parse_full(input).unwrap();
         assert!(result.netlist.num_devices() >= 3);
     }
+
+    #[test]
+    fn test_title_line_with_asterisk() {
+        // In SPICE, the first line is ALWAYS the title, even if it starts with '*'.
+        // This was a bug where the first line starting with '*' was incorrectly
+        // treated as a comment, causing the second line to be eaten as the title.
+        let input = r#"* LC Filter with Coupled Inductors
+VIN in 0 AC 1
+R1 in out 50
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        // Should have 2 devices: VIN and R1
+        assert_eq!(
+            result.netlist.num_devices(),
+            2,
+            "Should parse 2 devices (VIN and R1)"
+        );
+        // The title should contain the first line content (with asterisk)
+        let title = result.netlist.title();
+        assert!(
+            title.is_some(),
+            "Title should be present"
+        );
+    }
+
+    #[test]
+    fn test_comment_line_after_title() {
+        // Comment lines AFTER the title should still be skipped
+        let input = r#"Normal Title
+* This is a comment and should be skipped
+VIN in 0 AC 1
+R1 in out 50
+.end
+"#;
+
+        let result = parse_full(input).unwrap();
+        // Should have 2 devices: VIN and R1
+        assert_eq!(
+            result.netlist.num_devices(),
+            2,
+            "Should parse 2 devices (VIN and R1)"
+        );
+    }
 }
