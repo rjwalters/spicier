@@ -15,6 +15,7 @@ members = [
     "crates/spicier-cli",
     "crates/spicier-validate",
 ]
+default-members = ["crates/spicier-cli"]
 
 [workspace.package]
 version = "0.1.0"
