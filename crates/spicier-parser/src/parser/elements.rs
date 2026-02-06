@@ -6,7 +6,9 @@ use spicier_devices::controlled::{Cccs, Ccvs, Vccs, Vcvs};
 use spicier_devices::diode::{Diode, DiodeParams};
 use spicier_devices::expression::parse_expression;
 use spicier_devices::jfet::{Jfet, JfetParams, JfetType};
-use spicier_devices::mosfet::{Bsim3Mosfet, Bsim3Params, Mosfet, MosfetParams, MosfetType};
+use spicier_devices::mosfet::{
+    Bsim3Mosfet, Bsim3Params, Bsim4Mosfet, Bsim4Params, Mosfet, MosfetParams, MosfetType,
+};
 use spicier_devices::mutual::MutualInductance;
 use spicier_devices::passive::{Capacitor, Inductor, Resistor};
 use spicier_devices::sources::{CurrentSource, VoltageSource};
@@ -271,6 +273,7 @@ impl<'a> Parser<'a> {
         enum MosfetModel {
             Level1(MosfetType, MosfetParams),
             Bsim3(Bsim3Params),
+            Bsim4(Bsim4Params),
         }
 
         // Default to Level 1 NMOS
@@ -294,6 +297,12 @@ impl<'a> Parser<'a> {
                     }
                     Some(ModelDefinition::Pmos49(bp)) => {
                         model = MosfetModel::Bsim3(bp.clone());
+                    }
+                    Some(ModelDefinition::Nmos54(bp)) => {
+                        model = MosfetModel::Bsim4(bp.clone());
+                    }
+                    Some(ModelDefinition::Pmos54(bp)) => {
+                        model = MosfetModel::Bsim4(bp.clone());
                     }
                     _ => {}
                 }
@@ -355,6 +364,27 @@ impl<'a> Parser<'a> {
                     params.nf = nf;
                 }
                 let mosfet = Bsim3Mosfet::with_params(
+                    name,
+                    node_drain,
+                    node_gate,
+                    node_source,
+                    node_bulk,
+                    params,
+                );
+                self.netlist.add_device(mosfet);
+            }
+            MosfetModel::Bsim4(mut params) => {
+                // Apply instance parameter overrides
+                if let Some(w) = w_override {
+                    params.w = w;
+                }
+                if let Some(l) = l_override {
+                    params.l = l;
+                }
+                if let Some(nf) = nf_override {
+                    params.nf = nf;
+                }
+                let mosfet = Bsim4Mosfet::with_params(
                     name,
                     node_drain,
                     node_gate,

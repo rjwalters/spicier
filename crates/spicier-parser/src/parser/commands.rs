@@ -7,7 +7,7 @@ use spicier_devices::bjt::BjtParams;
 use spicier_devices::diode::DiodeParams;
 use spicier_devices::expression::{EvalContext, parse_expression_with_params};
 use spicier_devices::jfet::JfetParams;
-use spicier_devices::mosfet::{Bsim3Params, MosfetParams, MosfetType};
+use spicier_devices::mosfet::{Bsim3Params, Bsim4Params, MosfetParams, MosfetType};
 
 use super::ParamContext;
 use crate::error::{Error, Result};
@@ -669,7 +669,11 @@ impl<'a> Parser<'a> {
                     .find(|(k, _)| k == "LEVEL")
                     .map(|(_, v)| *v as i32)
                     .unwrap_or(1);
-                if level == 49 || level == 8 {
+                if level == 54 || level == 14 {
+                    // BSIM4 model
+                    let bp = parse_bsim4_params(&params, MosfetType::Nmos);
+                    ModelDefinition::Nmos54(bp)
+                } else if level == 49 || level == 8 {
                     // BSIM3 model
                     let bp = parse_bsim3_params(&params, MosfetType::Nmos);
                     ModelDefinition::Nmos49(bp)
@@ -697,7 +701,11 @@ impl<'a> Parser<'a> {
                     .find(|(k, _)| k == "LEVEL")
                     .map(|(_, v)| *v as i32)
                     .unwrap_or(1);
-                if level == 49 || level == 8 {
+                if level == 54 || level == 14 {
+                    // BSIM4 model
+                    let bp = parse_bsim4_params(&params, MosfetType::Pmos);
+                    ModelDefinition::Pmos54(bp)
+                } else if level == 49 || level == 8 {
                     // BSIM3 model
                     let bp = parse_bsim3_params(&params, MosfetType::Pmos);
                     ModelDefinition::Pmos49(bp)
@@ -1547,6 +1555,161 @@ fn parse_bsim3_params(params: &[(String, f64)], mos_type: MosfetType) -> Bsim3Pa
             "AD" => bp.ad = *v,
             "PS" => bp.ps = *v,
             "PD" => bp.pd = *v,
+
+            // Skip LEVEL and unrecognized parameters
+            _ => {}
+        }
+    }
+
+    bp
+}
+
+/// Parse BSIM4 model parameters from parameter list.
+fn parse_bsim4_params(params: &[(String, f64)], mos_type: MosfetType) -> Bsim4Params {
+    let mut bp = match mos_type {
+        MosfetType::Nmos => Bsim4Params::nmos_default(),
+        MosfetType::Pmos => Bsim4Params::pmos_default(),
+        _ => Bsim4Params::nmos_default(),
+    };
+
+    for (k, v) in params {
+        match k.as_str() {
+            // Geometry parameters
+            "TOXE" => bp.toxe = *v,
+            "TOXP" => bp.toxp = *v,
+            "TOXM" => bp.toxm = *v,
+            // Also accept TOX as alias for TOXE (backward compat with BSIM3 netlists)
+            "TOX" => {
+                bp.toxe = *v;
+                bp.toxp = *v;
+                bp.toxm = *v;
+            }
+            "LINT" | "DL" => bp.lint = *v,
+            "WINT" | "DW" => bp.wint = *v,
+            "LMIN" => bp.lmin = *v,
+            "WMIN" => bp.wmin = *v,
+
+            // Threshold voltage parameters
+            "VTH0" | "VTHO" => bp.vth0 = *v,
+            "K1" => bp.k1 = *v,
+            "K2" => bp.k2 = *v,
+            "DVT0" => bp.dvt0 = *v,
+            "DVT1" => bp.dvt1 = *v,
+            "DVT2" => bp.dvt2 = *v,
+            "NLX" => bp.nlx = *v,
+            "VOFF" => bp.voff = *v,
+            "NFACTOR" => bp.nfactor = *v,
+            "VFB" => bp.vfb = *v,
+
+            // Width effect parameters
+            "K3" => bp.k3 = *v,
+            "K3B" => bp.k3b = *v,
+            "W0" => bp.w0 = *v,
+            "DVT0W" => bp.dvt0w = *v,
+            "DVT1W" => bp.dvt1w = *v,
+            "DVT2W" => bp.dvt2w = *v,
+
+            // Mobility parameters
+            "U0" | "UO" => bp.u0 = *v,
+            "UA" => bp.ua = *v,
+            "UB" => bp.ub = *v,
+            "UC" => bp.uc = *v,
+            "VSAT" => bp.vsat = *v,
+            "MOBMOD" => bp.mobmod = *v as i32,
+            "EU" => bp.eu = *v,
+
+            // Output conductance parameters
+            "PCLM" => bp.pclm = *v,
+            "PDIBLC1" => bp.pdiblc1 = *v,
+            "PDIBLC2" => bp.pdiblc2 = *v,
+            "DROUT" => bp.drout = *v,
+            "DELTA" => bp.delta = *v,
+            "PDIBLCB" => bp.pdiblcb = *v,
+            "FPROUT" => bp.fprout = *v,
+            "PVAG" => bp.pvag = *v,
+
+            // DIBL parameters
+            "ETA0" => bp.eta0 = *v,
+            "ETAB" => bp.etab = *v,
+            "DSUB" => bp.dsub = *v,
+
+            // Substrate current parameters
+            "ALPHA0" => bp.alpha0 = *v,
+            "BETA0" => bp.beta0 = *v,
+
+            // Parasitic resistance
+            "RDSW" => bp.rdsw = *v,
+            "RD" => bp.rd = *v,
+            "RS" => bp.rs = *v,
+            "PRWB" => bp.prwb = *v,
+            "PRWG" => bp.prwg = *v,
+            "RSH" => bp.rsh = *v,
+
+            // Process parameters
+            "NCH" => bp.nch = *v,
+            "NGATE" => bp.ngate = *v,
+            "NSUB" => bp.nsub = *v,
+            "XT" => bp.xt = *v,
+            "NDEP" => bp.ndep = *v,
+
+            // Quantum mechanical effect parameters
+            "QME1" => bp.qme1 = *v,
+            "QME2" => bp.qme2 = *v,
+            "QME3" => bp.qme3 = *v,
+            "POLYMOD" => bp.polymod = *v as i32,
+
+            // Stress effect parameters
+            "SAREF" => bp.saref = *v,
+            "SBREF" => bp.sbref = *v,
+            "KU0" => bp.ku0 = *v,
+            "KVTH0" => bp.kvth0 = *v,
+            "STK2" => bp.stk2 = *v,
+            "STHETA" => bp.stheta = *v,
+
+            // Gate tunneling current
+            "AGIDL" => bp.agidl = *v,
+            "BGIDL" => bp.bgidl = *v,
+            "CGIDL" => bp.cgidl = *v,
+            "EGIDL" => bp.egidl = *v,
+
+            // Capacitance parameters
+            "CGSO" => bp.cgso = *v,
+            "CGDO" => bp.cgdo = *v,
+            "CGBO" => bp.cgbo = *v,
+            "CJ" => bp.cj = *v,
+            "CJSW" => bp.cjsw = *v,
+            "CJSWG" => bp.cjswg = *v,
+            "MJ" => bp.mj = *v,
+            "MJSW" => bp.mjsw = *v,
+            "MJSWG" => bp.mjswg = *v,
+            "PB" => bp.pb = *v,
+            "PBSW" => bp.pbsw = *v,
+            "PBSWG" => bp.pbswg = *v,
+            "CAPMOD" => bp.capmod = *v as i32,
+
+            // Temperature parameters
+            "TNOM" => bp.tnom = *v + 273.15,
+            "KT1" => bp.kt1 = *v,
+            "KT1L" => bp.kt1l = *v,
+            "KT2" => bp.kt2 = *v,
+            "UTE" => bp.ute = *v,
+            "UA1" => bp.ua1 = *v,
+            "UB1" => bp.ub1 = *v,
+            "UC1" => bp.uc1 = *v,
+            "AT" => bp.at = *v,
+            "PRT" => bp.prt = *v,
+
+            // Instance parameters (model defaults)
+            "W" => bp.w = *v,
+            "L" => bp.l = *v,
+            "NF" => bp.nf = *v,
+            "AS" => bp.as_ = *v,
+            "AD" => bp.ad = *v,
+            "PS" => bp.ps = *v,
+            "PD" => bp.pd = *v,
+            "NRD" => bp.nrd = *v,
+            "NRS" => bp.nrs = *v,
+            "MULT" => bp.mult = *v,
 
             // Skip LEVEL and unrecognized parameters
             _ => {}
