@@ -9,6 +9,10 @@ repository.workspace = true
 keywords = ["spice", "circuit", "simulator", "cli", "eda"]
 categories = ["command-line-utilities", "simulation", "science"]
 
+[[bin]]
+name = "spicier"
+path = "src/main.rs"
+
 [features]
 default = []
 cuda = ["spicier-backend-cuda"]
