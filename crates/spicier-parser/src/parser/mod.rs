@@ -6,7 +6,7 @@ use spicier_core::{Netlist, NodeId, units::parse_value};
 use spicier_devices::bjt::BjtParams;
 use spicier_devices::diode::DiodeParams;
 use spicier_devices::jfet::JfetParams;
-use spicier_devices::mosfet::{Bsim3Params, MosfetParams};
+use spicier_devices::mosfet::{Bsim3Params, Bsim4Params, MosfetParams};
 
 use crate::error::{Error, Result};
 use crate::lexer::{Lexer, SpannedToken, Token};
@@ -135,6 +135,10 @@ pub(crate) enum ModelDefinition {
     Nmos49(Bsim3Params),
     /// BSIM3 PMOS (LEVEL=49 or LEVEL=8)
     Pmos49(Bsim3Params),
+    /// BSIM4 NMOS (LEVEL=54 or LEVEL=14)
+    Nmos54(Bsim4Params),
+    /// BSIM4 PMOS (LEVEL=54 or LEVEL=14)
+    Pmos54(Bsim4Params),
     Njf(JfetParams),
     Pjf(JfetParams),
     Npn(BjtParams),

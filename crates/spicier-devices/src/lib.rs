@@ -56,6 +56,9 @@ pub use mosfet::{Mosfet, MosfetLevel, MosfetParams, MosfetRegion, MosfetType};
 // Re-export BSIM3 MOSFET
 pub use mosfet::bsim3::{Bsim3Mosfet, Bsim3Params, Bsim3Region};
 
+// Re-export BSIM4 MOSFET
+pub use mosfet::bsim4::{Bsim4Mosfet, Bsim4Params, Bsim4Region};
+
 // Re-export mutual inductance
 pub use mutual::MutualInductance;
 
